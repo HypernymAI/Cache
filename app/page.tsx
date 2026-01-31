@@ -19,6 +19,47 @@ interface EventLogEntry {
   message: string;
 }
 
+// Claudestorm API types
+interface ClaudestormSession {
+  session_id: string;
+  message_count: number;
+  total_tokens: number;
+  last_timestamp: string;
+  summary: string | null;
+}
+
+interface ClaudestormSessionDetail {
+  stats: {
+    session_id: string;
+    message_count: number;
+    total_tokens: number;
+    first_timestamp: string;
+    last_timestamp: string;
+  };
+  analysis: {
+    scores: {
+      error_cascade: number;
+      semantic_coherence: number;
+      lexical_diversity: number;
+    };
+  } | null;
+  error_count: number;
+  drift_signals: string[];
+  success_signals: string[];
+  should_fork: boolean;
+}
+
+interface ClaudestormAnchorData {
+  session_id: string;
+  goal: string;
+  blockers: string[];
+  recent_tools: Record<string, number>;
+  total_tokens: number;
+  summary: string;
+}
+
+const CLAUDESTORM_API = "http://localhost:8100";
+
 function generateId(): string {
   return Math.random().toString(36).substring(2, 11);
 }
@@ -163,6 +204,12 @@ export default function AutoForkConsole() {
   const [copied, setCopied] = useState(false);
   const [mounted, setMounted] = useState(false);
 
+  // Claudestorm integration state
+  const [claudestormConnected, setClaudestormConnected] = useState(false);
+  const [claudestormSessions, setClaudestormSessions] = useState<ClaudestormSession[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [loadingApi, setLoadingApi] = useState(false);
+
   useEffect(() => {
     setMounted(true);
     try {
@@ -203,6 +250,34 @@ export default function AutoForkConsole() {
       localStorage.setItem("autofork_threshold", forkThreshold.toString());
     }
   }, [forkThreshold, mounted]);
+
+  // Check claudestorm connection on mount
+  useEffect(() => {
+    if (!mounted) return;
+    const checkClaudestorm = async () => {
+      try {
+        const res = await fetch(`${CLAUDESTORM_API}/api/autofork/health`, {
+          method: 'GET',
+          signal: AbortSignal.timeout(2000)
+        });
+        if (res.ok) {
+          setClaudestormConnected(true);
+          // Fetch sessions list
+          const sessionsRes = await fetch(`${CLAUDESTORM_API}/api/autofork/sessions?limit=10`);
+          if (sessionsRes.ok) {
+            const data = await sessionsRes.json();
+            setClaudestormSessions(data.sessions || []);
+          }
+        }
+      } catch {
+        setClaudestormConnected(false);
+      }
+    };
+    checkClaudestorm();
+    // Poll every 30s
+    const interval = setInterval(checkClaudestorm, 30000);
+    return () => clearInterval(interval);
+  }, [mounted]);
 
   const latestAnchor = anchors[0] || null;
   const goldAnchors = anchors.filter((a) => a.isGold);
@@ -306,6 +381,103 @@ export default function AutoForkConsole() {
     }
   }, []);
 
+  const handleFetchFromClaudestorm = useCallback(async () => {
+    if (!selectedSessionId) return;
+    setLoadingApi(true);
+    try {
+      // Fetch session detail and anchor data in parallel
+      const [detailRes, anchorRes] = await Promise.all([
+        fetch(`${CLAUDESTORM_API}/api/autofork/session/${selectedSessionId}`),
+        fetch(`${CLAUDESTORM_API}/api/autofork/session/${selectedSessionId}/anchor`)
+      ]);
+
+      if (!detailRes.ok || !anchorRes.ok) {
+        throw new Error("Failed to fetch session data");
+      }
+
+      const detail: ClaudestormSessionDetail = await detailRes.json();
+      const anchorData: ClaudestormAnchorData = await anchorRes.json();
+
+      // Determine status from signals
+      let status: Anchor["status"] = "stable";
+      if (detail.success_signals.length > 0) status = "success";
+      else if (detail.drift_signals.length > 0) status = "drifting";
+
+      // Build summary from API data
+      const summaryParts: string[] = [];
+      summaryParts.push(`GOAL: ${anchorData.goal.slice(0, 200)}`);
+      if (anchorData.blockers.length > 0) {
+        summaryParts.push(`BLOCKERS: ${anchorData.blockers.slice(0, 2).join("; ").slice(0, 200)}`);
+      }
+      if (Object.keys(anchorData.recent_tools).length > 0) {
+        const tools = Object.entries(anchorData.recent_tools).slice(0, 3).map(([t, c]) => `${t}(${c})`).join(", ");
+        summaryParts.push(`RECENT TOOLS: ${tools}`);
+      }
+      if (detail.analysis) {
+        summaryParts.push(`ANALYSIS: error_cascade=${detail.analysis.scores.error_cascade.toFixed(2)}, coherence=${detail.analysis.scores.semantic_coherence.toFixed(2)}`);
+      }
+
+      const summary = summaryParts.join("\n");
+
+      // Generate resume prompt
+      const resumeParts: string[] = [];
+      resumeParts.push(`## Current Goal\n${anchorData.goal.slice(0, 300)}`);
+      if (lastGoldAnchor) {
+        resumeParts.push(`## Last Stable Checkpoint (Gold Anchor)\n${lastGoldAnchor.summary}`);
+      }
+      if (anchorData.blockers.length > 0) {
+        resumeParts.push(`## Current Blockers\n${anchorData.blockers.map((b, i) => `${i + 1}. ${b.slice(0, 100)}`).join("\n")}`);
+      }
+      resumeParts.push(`## Next Steps\n1. Review current state\n2. Address blockers if any\n3. Continue implementation`);
+      resumeParts.push(`## Recovery Rule\nIf you drift, restate the goal anchor and continue from the last stable anchor.`);
+
+      const resumePrompt = resumeParts.join("\n\n");
+
+      // Check if should fork
+      const shouldFork = detail.should_fork || detail.stats.total_tokens > forkThreshold;
+      let newSessionId = currentSessionId;
+
+      if (shouldFork) {
+        newSessionId = generateId();
+        const reasons = [...detail.drift_signals, ...detail.success_signals];
+        if (detail.stats.total_tokens > forkThreshold) reasons.push("token_limit");
+        const newEvent: EventLogEntry = {
+          id: generateId(),
+          timestamp: new Date().toISOString(),
+          message: `FORKED (via API): reasons=[${reasons.join(", ")}], newSessionId=${newSessionId.slice(0, 8)}`,
+        };
+        setEventLog((prev) => [newEvent, ...prev]);
+        setCurrentSessionId(newSessionId);
+      }
+
+      const newAnchor: Anchor = {
+        id: generateId(),
+        createdAt: new Date().toISOString(),
+        sessionId: newSessionId,
+        tokenEstimate: detail.stats.total_tokens,
+        status,
+        summary,
+        resumePrompt,
+        isGold: false,
+      };
+
+      setAnchors((prev) => [newAnchor, ...prev]);
+
+      // Log the fetch
+      const fetchEvent: EventLogEntry = {
+        id: generateId(),
+        timestamp: new Date().toISOString(),
+        message: `FETCHED: claudestorm session ${selectedSessionId.slice(0, 8)}, ${detail.stats.total_tokens} tokens`,
+      };
+      setEventLog((prev) => [fetchEvent, ...prev]);
+
+    } catch (e) {
+      console.error("Failed to fetch from claudestorm:", e);
+    } finally {
+      setLoadingApi(false);
+    }
+  }, [selectedSessionId, currentSessionId, forkThreshold, lastGoldAnchor]);
+
   const getStatusColor = (status: Anchor["status"]) => {
     switch (status) {
       case "success":
@@ -398,6 +570,43 @@ export default function AutoForkConsole() {
               Clear All
             </button>
           </div>
+
+          {/* Claudestorm Integration */}
+          <div className="mt-4 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700/50">
+            <div className="flex items-center gap-2 mb-2">
+              <span className={`w-2 h-2 rounded-full ${claudestormConnected ? "bg-emerald-500" : "bg-zinc-600"}`} />
+              <span className="text-xs text-zinc-400">
+                {claudestormConnected ? "Claudestorm connected" : "Claudestorm offline"}
+              </span>
+            </div>
+            {claudestormConnected && claudestormSessions.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                <select
+                  value={selectedSessionId || ""}
+                  onChange={(e) => setSelectedSessionId(e.target.value || null)}
+                  className="flex-1 min-w-[200px] px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                >
+                  <option value="">Select session...</option>
+                  {claudestormSessions.map((s) => (
+                    <option key={s.session_id} value={s.session_id}>
+                      {s.session_id.slice(0, 8)} — {s.total_tokens.toLocaleString()} tokens
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleFetchFromClaudestorm}
+                  disabled={!selectedSessionId || loadingApi}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:text-zinc-500 rounded-lg text-sm font-medium transition-all"
+                >
+                  {loadingApi ? "Fetching..." : "Fetch Session"}
+                </button>
+              </div>
+            )}
+            {claudestormConnected && claudestormSessions.length === 0 && (
+              <p className="text-xs text-zinc-500">No active sessions found</p>
+            )}
+          </div>
+
           {transcript && (
             <div className="mt-3 text-xs text-zinc-500">
               <span className={Math.ceil(transcript.length / 4) > forkThreshold ? "text-amber-400" : ""}>
