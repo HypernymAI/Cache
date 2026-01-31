@@ -1,0 +1,487 @@
+                                                                                                    
+      170                                                                                                                                                          
+      178 -function PlayerCar({ lane, color, speed }: { lane: number; color: string; speed: number }) {                                                            
+      171 +function PlayerCar({ laneRef, color, speed }: { laneRef: React.MutableRefObject<number>; color: string; speed: number }) {                              
+      172    const groupRef = useRef<THREE.Group>(null);                                                                                                           
+      180 -  const targetX = useRef(0);                                                                                                                            
+      181 -  const currentX = useRef(0);                                                                                                                           
+      173 +  const posX = useRef(0);                                                                                                                               
+      174                                                                                                                                                          
+      175    useFrame(() => {                                                                                                                                      
+      176      if (groupRef.current) {                                                                                                                             
+      185 -      targetX.current = lane * 5;                                                                                                                       
+      186 -      currentX.current += (targetX.current - currentX.current) * 0.1;                                                                                   
+      187 -      groupRef.current.position.x = currentX.current;                                                                                                   
+      188 -      groupRef.current.rotation.z = (targetX.current - currentX.current) * 0.04;                                                                        
+      177 +      const targetX = laneRef.current * 5;                                                                                                              
+      178 +      posX.current += (targetX - posX.current) * 0.1;                                                                                                   
+      179 +      groupRef.current.position.x = posX.current;                                                                                                       
+      180 +      groupRef.current.rotation.z = (targetX - posX.current) * 0.03;                                                                                    
+      181      }                                                                                                                                                   
+      182    });                                                                                                                                                   
+      183                                                                                                                                                          
+      192 -  const engineGlow = Math.min((speed - 1) / 2, 1);                                                                                                      
+      184 +  const engineGlow = Math.min((speed - 2) / 2, 1);                                                                                                      
+      185                                                                                                                                                          
+      186    return (                                                                                                                                              
+      187      <group ref={groupRef} position={[0, -0.5, 2]}>                                                                                                      
+      196 -      {/* Body */}                                                                                                                                      
+      188        <mesh position={[0, 0.4, 0]}>                                                                                                                     
+      189          <boxGeometry args={[1.8, 0.6, 4]} />                                                                                                            
+      190          <meshStandardMaterial color={color} metalness={0.95} roughness={0.05} />                                                                        
+      191        </mesh>                                                                                                                                           
+      201 -      {/* Cabin */}                                                                                                                                     
+      192        <mesh position={[0, 0.9, -0.3]}>                                                                                                                  
+      193          <boxGeometry args={[1.5, 0.5, 2]} />                                                                                                            
+      194          <meshStandardMaterial color="#111" metalness={0.7} roughness={0.2} />                                                                           
+      195        </mesh>                                                                                                                                           
+      206 -      {/* Hood accent */}                                                                                                                               
+      207 -      <mesh position={[0, 0.72, 0.8]}>                                                                                                                  
+      208 -        <boxGeometry args={[0.8, 0.05, 1.5]} />                                                                                                         
+      209 -        <meshBasicMaterial color={color} />                                                                                                             
+      210 -      </mesh>                                                                                                                                           
+      211 -      {/* Wheels */}                                                                                                                                    
+      196        {[[-0.95, 0, 1.2], [0.95, 0, 1.2], [-0.95, 0, -1.1], [0.95, 0, -1.1]].map((pos, i) => (                                                           
+      197          <mesh key={i} position={pos as [number, number, number]} rotation={[0, 0, Math.PI / 2]}>                                                        
+      198            <cylinderGeometry args={[0.38, 0.38, 0.25, 20]} />                                                                                            
+      199            <meshStandardMaterial color="#0a0a0a" metalness={0.9} roughness={0.2} />                                                                      
+      200          </mesh>                                                                                                                                         
+      201        ))}                                                                                                                                               
+      218 -      {/* Headlights */}                                                                                                                                
+      219 -      <pointLight position={[0.6, 0.4, 2.5]} color="#ffffff" intensity={4} distance={30} />                                                             
+      220 -      <pointLight position={[-0.6, 0.4, 2.5]} color="#ffffff" intensity={4} distance={30} />                                                            
+      221 -      <spotLight position={[0, 0.5, 2.5]} angle={0.4} penumbra={0.5} color="#aaddff" intensity={8} distance={50} />                                     
+      202 +      <pointLight position={[0.6, 0.4, 2.5]} color="#ffffff" intensity={5} distance={35} />                                                             
+      203 +      <pointLight position={[-0.6, 0.4, 2.5]} color="#ffffff" intensity={5} distance={35} />                                                            
+      204 +      <spotLight position={[0, 0.5, 2.5]} angle={0.5} penumbra={0.5} color="#aaddff" intensity={10} distance={60} />                                    
+      205        {[0.55, -0.55].map((x, i) => (                                                                                                                    
+      206          <mesh key={`hl-${i}`} position={[x, 0.4, 2.05]}>                                                                                                
+      224 -          <sphereGeometry args={[0.18, 12, 12]} />                                                                                                      
+      207 +          <sphereGeometry args={[0.2, 12, 12]} />                                                                                                       
+      208            <meshBasicMaterial color="#ffffff" />                                                                                                         
+      209          </mesh>                                                                                                                                         
+      210        ))}                                                                                                                                               
+      228 -      {/* DRL strips */}                                                                                                                                
+      229 -      {[0.75, -0.75].map((x, i) => (                                                                                                                    
+      230 -        <mesh key={`drl-${i}`} position={[x, 0.35, 2.02]}>                                                                                              
+      231 -          <boxGeometry args={[0.08, 0.06, 0.02]} />                                                                                                     
+      232 -          <meshBasicMaterial color="#00ccff" />                                                                                                         
+      233 -        </mesh>                                                                                                                                         
+      234 -      ))}                                                                                                                                               
+      235 -      {/* Taillights */}                                                                                                                                
+      211        <mesh position={[0, 0.5, -2.03]}>                                                                                                                 
+      237 -        <boxGeometry args={[1.6, 0.08, 0.02]} />                                                                                                        
+      212 +        <boxGeometry args={[1.6, 0.1, 0.02]} />                                                                                                         
+      213          <meshBasicMaterial color="#ff1100" />                                                                                                           
+      214        </mesh>                                                                                                                                           
+      240 -      <pointLight position={[0, 0.5, -2.2]} color="#ff2200" intensity={2} distance={10} />                                                              
+      241 -      {/* Engine glow */}                                                                                                                               
+      242 -      <pointLight position={[0, 0.2, -2.5]} color="#4488ff" intensity={5 * engineGlow} distance={12} />                                                 
+      243 -      {engineGlow > 0.3 && (                                                                                                                            
+      244 -        <mesh position={[0, 0.2, -2.2]}>                                                                                                                
+      245 -          <sphereGeometry args={[0.3 + engineGlow * 0.2, 8, 8]} />                                                                                      
+      246 -          <meshBasicMaterial color="#4488ff" transparent opacity={engineGlow * 0.6} />                                                                  
+      215 +      <pointLight position={[0, 0.2, -2.5]} color="#4488ff" intensity={8 * engineGlow} distance={15} />                                                 
+      216 +      {engineGlow > 0.2 && (                                                                                                                            
+      217 +        <mesh position={[0, 0.2, -2.3]}>                                                                                                                
+      218 +          <sphereGeometry args={[0.4 + engineGlow * 0.3, 12, 12]} />                                                                                    
+      219 +          <meshBasicMaterial color="#4488ff" transparent opacity={engineGlow * 0.7} />                                                                  
+      220          </mesh>                                                                                                                                         
+      221        )}                                                                                                                                                
+      222      </group>                                                                                                                                            
+      223    );                                                                                                                                                    
+      224  }                                                                                                                                                       
+      225                                                                                                                                                          
+      253 -function ObstacleMesh({ obstacle, time, speed }: { obstacle: Obstacle; time: number; speed: number }) {                                                 
+      226 +function PickupMesh({ pickup, time, speed }: { pickup: Pickup; time: number; speed: number }) {                                                         
+      227    const meshRef = useRef<THREE.Mesh>(null);                                                                                                             
+      255 -  const scrollZ = time * speed * 35;                                                                                                                    
+      256 -  const z = obstacle.z - scrollZ;                                                                                                                       
+      228 +  const scrollZ = time * speed * 40;                                                                                                                    
+      229 +  const z = pickup.z - scrollZ;                                                                                                                         
+      230                                                                                                                                                          
+      231    useFrame(() => {                                                                                                                                      
+      259 -    if (meshRef.current && obstacle.type === 1) {                                                                                                       
+      260 -      meshRef.current.rotation.y += 0.06;                                                                                                               
+      261 -      meshRef.current.rotation.x += 0.03;                                                                                                               
+      232 +    if (meshRef.current) {                                                                                                                              
+      233 +      meshRef.current.rotation.y += 0.08;                                                                                                               
+      234 +      meshRef.current.rotation.x += 0.04;                                                                                                               
+      235      }                                                                                                                                                   
+      236    });                                                                                                                                                   
+      237                                                                                                                                                          
+      265 -  if (z < -10 || z > 300 || obstacle.collected) return null;                                                                                            
+      238 +  if (z < -10 || z > 300 || pickup.collected) return null;                                                                                              
+      239                                                                                                                                                          
+      267 -  if (obstacle.type === 0) {                                                                                                                            
+      268 -    // Barrier                                                                                                                                          
+      269 -    const pulse = Math.sin(time * 8) * 0.2 + 0.8;                                                                                                       
+      270 -    return (                                                                                                                                            
+      271 -      <group position={[obstacle.x, 0, z]}>                                                                                                             
+      272 -        <mesh position={[0, 0.6, 0]}>                                                                                                                   
+      273 -          <boxGeometry args={[3, 1.8, 0.6]} />                                                                                                          
+      274 -          <meshStandardMaterial                                                                                                                         
+      275 -            color="#dd2211"                                                                                                                             
+      276 -            emissive="#ff3322"                                                                                                                          
+      277 -            emissiveIntensity={0.6 * pulse}                                                                                                             
+      278 -            metalness={0.3}                                                                                                                             
+      279 -            roughness={0.5}                                                                                                                             
+      280 -          />                                                                                                                                            
+      281 -        </mesh>                                                                                                                                         
+      282 -        {/* Warning stripes */}                                                                                                                         
+      283 -        {[-0.8, 0, 0.8].map((xOff, i) => (                                                                                                              
+      284 -          <mesh key={i} position={[xOff, 0.6, 0.32]}>                                                                                                   
+      285 -            <boxGeometry args={[0.3, 1.6, 0.02]} />                                                                                                     
+      286 -            <meshBasicMaterial color="#ffcc00" />                                                                                                       
+      287 -          </mesh>                                                                                                                                       
+      288 -        ))}                                                                                                                                             
+      289 -        <pointLight position={[0, 1.2, 0]} color="#ff3322" intensity={4 * pulse} distance={15} />                                                       
+      290 -      </group>                                                                                                                                          
+      291 -    );                                                                                                                                                  
+      292 -  } else {                                                                                                                                              
+      293 -    // Boost orb                                                                                                                                        
+      294 -    const pulse = Math.sin(time * 6) * 0.3 + 1;                                                                                                         
+      295 -    return (                                                                                                                                            
+      296 -      <group position={[obstacle.x, 1, z]}>                                                                                                             
+      297 -        <mesh ref={meshRef}>                                                                                                                            
+      298 -          <octahedronGeometry args={[0.9 * pulse, 0]} />                                                                                                
+      299 -          <meshStandardMaterial                                                                                                                         
+      300 -            color="#22ff66"                                                                                                                             
+      301 -            emissive="#22ff66"                                                                                                                          
+      302 -            emissiveIntensity={1}                                                                                                                       
+      303 -            metalness={0.2}                                                                                                                             
+      304 -            roughness={0.3}                                                                                                                             
+      305 -          />                                                                                                                                            
+      306 -        </mesh>                                                                                                                                         
+      307 -        {/* Outer glow ring */}                                                                                                                         
+      308 -        <mesh rotation={[Math.PI / 2, 0, time * 2]}>                                                                                                    
+      309 -          <torusGeometry args={[1.3, 0.05, 8, 32]} />                                                                                                   
+      310 -          <meshBasicMaterial color="#22ff66" transparent opacity={0.5} />                                                                               
+      311 -        </mesh>                                                                                                                                         
+      312 -        <mesh rotation={[0, 0, time * -3]}>                                                                                                             
+      313 -          <torusGeometry args={[1.1, 0.04, 8, 32]} />                                                                                                   
+      314 -          <meshBasicMaterial color="#88ffaa" transparent opacity={0.4} />                                                                               
+      315 -        </mesh>                                                                                                                                         
+      316 -        <pointLight position={[0, 0, 0]} color="#22ff66" intensity={6 * pulse} distance={18} />                                                         
+      317 -      </group>                                                                                                                                          
+      318 -    );                                                                                                                                                  
+      319 -  }                                                                                                                                                     
+      240 +  const pulse = Math.sin(time * 8 + pickup.id) * 0.3 + 1;                                                                                               
+      241 +                                                                                                                                                        
+      242 +  return (                                                                                                                                              
+      243 +    <group position={[pickup.x, 1.2, z]}>                                                                                                               
+      244 +      <mesh ref={meshRef}>                                                                                                                              
+      245 +        <octahedronGeometry args={[1.1 * pulse, 1]} />                                                                                                  
+      246 +        <meshStandardMaterial                                                                                                                           
+      247 +          color={pickup.color}                                                                                                                          
+      248 +          emissive={pickup.color}                                                                                                                       
+      249 +          emissiveIntensity={1.2}                                                                                                                       
+      250 +          metalness={0.3}                                                                                                                               
+      251 +          roughness={0.2}                                                                                                                               
+      252 +        />                                                                                                                                              
+      253 +      </mesh>                                                                                                                                           
+      254 +      <mesh rotation={[Math.PI / 2, 0, time * 3]}>                                                                                                      
+      255 +        <torusGeometry args={[1.6, 0.08, 8, 32]} />                                                                                                     
+      256 +        <meshBasicMaterial color={pickup.color} transparent opacity={0.6} />                                                                            
+      257 +      </mesh>                                                                                                                                           
+      258 +      <mesh rotation={[0, time * -4, Math.PI / 4]}>                                                                                                     
+      259 +        <torusGeometry args={[1.4, 0.06, 8, 32]} />                                                                                                     
+      260 +        <meshBasicMaterial color="#ffffff" transparent opacity={0.4} />                                                                                 
+      261 +      </mesh>                                                                                                                                           
+      262 +      <mesh rotation={[Math.PI / 3, time * 2, 0]}>                                                                                                      
+      263 +        <torusGeometry args={[1.8, 0.05, 8, 32]} />                                                                                                     
+      264 +        <meshBasicMaterial color={pickup.color} transparent opacity={0.3} />                                                                            
+      265 +      </mesh>                                                                                                                                           
+      266 +      <pointLight color={pickup.color} intensity={8 * pulse} distance={25} />                                                                           
+      267 +    </group>                                                                                                                                            
+      268 +  );                                                                                                                                                    
+      269  }                                                                                                                                                       
+      270                                                                                                                                                          
+      322 -function Scene({ gameState, carColor }: { gameState: GameState; carColor: string }) {                                                                   
+      271 +function Scene({ gameState, carColor, laneRef }: { gameState: GameState; carColor: string; laneRef: React.MutableRefObject<number> }) {                 
+      272    const { camera } = useThree();                                                                                                                        
+      273                                                                                                                                                          
+      274    useEffect(() => {                                                                                                                                     
+      326 -    camera.position.set(0, 4.5, -9);                                                                                                                    
+      327 -    camera.lookAt(0, 0, 15);                                                                                                                            
+      275 +    camera.position.set(0, 5, -10);                                                                                                                     
+      276 +    camera.lookAt(0, 0, 20);                                                                                                                            
+      277    }, [camera]);                                                                                                                                         
+      278                                                                                                                                                          
+      279    return (                                                                                                                                              
+      280      <>                                                                                                                                                  
+      332 -      <ambientLight intensity={0.15} />                                                                                                                 
+      333 -      <fog attach="fog" args={['#050510', 20, 180]} />                                                                                                  
+      281 +      <ambientLight intensity={0.12} />                                                                                                                 
+      282 +      <fog attach="fog" args={['#030308', 15, 200]} />                                                                                                  
+      283                                                                                                                                                          
+      335 -      <VolumetricFog time={gameState.time} speed={gameState.speed} />                                                                                   
+      336 -      <Tunnel time={gameState.time} speed={gameState.speed} />                                                                                          
+      337 -      <PlayerCar lane={gameState.lane} color={carColor} speed={gameState.speed} />                                                                      
+      284 +      <VolumetricFog time={gameState.time} speed={gameState.speed} colors={gameState.collectedColors} />                                                
+      285 +      <Tunnel time={gameState.time} speed={gameState.speed} colors={gameState.collectedColors} />                                                       
+      286 +      <PlayerCar laneRef={laneRef} color={carColor} speed={gameState.speed} />                                                                          
+      287                                                                                                                                                          
+      339 -      {gameState.obstacles.map(obs => (                                                                                                                 
+      340 -        <ObstacleMesh key={obs.id} obstacle={obs} time={gameState.time} speed={gameState.speed} />                                                      
+      288 +      {gameState.pickups.map(p => (                                                                                                                     
+      289 +        <PickupMesh key={p.id} pickup={p} time={gameState.time} speed={gameState.speed} />                                                              
+      290        ))}                                                                                                                                               
+      291      </>                                                                                                                                                 
+      292    );                                                                                                                                                    
+     ...                                                                                                                                                           
+      296    const { game, startGame, endGame, updateGameScore, updateSpeed, updateDistance, config } = useCarStore();                                             
+      297    const [gameState, setGameState] = useState<GameState>({                                                                                               
+      298      lane: 0,                                                                                                                                            
+      350 -    speed: 1,                                                                                                                                           
+      351 -    obstacles: [],                                                                                                                                      
+      299 +    speed: 3,                                                                                                                                           
+      300 +    pickups: [],                                                                                                                                        
+      301      time: 0,                                                                                                                                            
+      302 +    collectedColors: [],                                                                                                                                
+      303    });                                                                                                                                                   
+      304    const [isClient, setIsClient] = useState(false);                                                                                                      
+      305                                                                                                                                                          
+      306    const keysRef = useRef(new Set<string>());                                                                                                            
+      307 +  const laneRef = useRef(0);                                                                                                                            
+      308    const frameRef = useRef(0);                                                                                                                           
+      309    const distanceRef = useRef(0);                                                                                                                        
+      359 -  const obstacleIdRef = useRef(0);                                                                                                                      
+      310 +  const pickupIdRef = useRef(0);                                                                                                                        
+      311                                                                                                                                                          
+      312    useEffect(() => {                                                                                                                                     
+      313      setIsClient(true);                                                                                                                                  
+      314    }, []);                                                                                                                                               
+      315                                                                                                                                                          
+      316    const handleStart = useCallback(() => {                                                                                                               
+      366 -    setGameState({ lane: 0, speed: 1, obstacles: [], time: 0 });                                                                                        
+      317 +    laneRef.current = 0;                                                                                                                                
+      318      distanceRef.current = 0;                                                                                                                            
+      319      frameRef.current = 0;                                                                                                                               
+      369 -    obstacleIdRef.current = 0;                                                                                                                          
+      320 +    pickupIdRef.current = 0;                                                                                                                            
+      321 +    setGameState({ lane: 0, speed: 3, pickups: [], time: 0, collectedColors: [] });                                                                     
+      322      startGame();                                                                                                                                        
+      323    }, [startGame]);                                                                                                                                      
+      324                                                                                                                                                          
+     ...                                                                                                                                                           
+      346      const interval = setInterval(() => {                                                                                                                
+      347        frameRef.current++;                                                                                                                               
+      348                                                                                                                                                          
+      349 +      // Handle input on ref directly                                                                                                                   
+      350 +      if (keysRef.current.has('arrowleft') || keysRef.current.has('a')) {                                                                               
+      351 +        laneRef.current = Math.max(-1, laneRef.current - 0.035);                                                                                        
+      352 +      }                                                                                                                                                 
+      353 +      if (keysRef.current.has('arrowright') || keysRef.current.has('d')) {                                                                              
+      354 +        laneRef.current = Math.min(1, laneRef.current + 0.035);                                                                                         
+      355 +      }                                                                                                                                                 
+      356 +                                                                                                                                                        
+      357        setGameState(prev => {                                                                                                                            
+      398 -        let newLane = prev.lane;                                                                                                                        
+      358          let newSpeed = prev.speed;                                                                                                                      
+      400 -        let newObstacles = [...prev.obstacles];                                                                                                         
+      359 +        let newPickups = [...prev.pickups];                                                                                                             
+      360 +        let newColors = [...prev.collectedColors];                                                                                                      
+      361          const newTime = prev.time + 0.016;                                                                                                              
+      362 +        const scrollZ = newTime * newSpeed * 40;                                                                                                        
+      363                                                                                                                                                          
+      403 -        // Input                                                                                                                                        
+      404 -        if (keysRef.current.has('arrowleft') || keysRef.current.has('a')) {                                                                             
+      405 -          newLane = Math.max(-1, newLane - 0.04);                                                                                                       
+      406 -        }                                                                                                                                               
+      407 -        if (keysRef.current.has('arrowright') || keysRef.current.has('d')) {                                                                            
+      408 -          newLane = Math.min(1, newLane + 0.04);                                                                                                        
+      409 -        }                                                                                                                                               
+      410 -                                                                                                                                                        
+      411 -        // Spawn obstacles                                                                                                                              
+      412 -        const spawnRate = Math.max(18, 40 - Math.floor(distanceRef.current / 400));                                                                     
+      364 +        // Spawn pickups                                                                                                                                
+      365 +        const spawnRate = Math.max(12, 30 - Math.floor(distanceRef.current / 500));                                                                     
+      366          if (frameRef.current % spawnRate === 0) {                                                                                                       
+      367            const lane = Math.floor(Math.random() * 3) - 1;                                                                                               
+      415 -          obstacleIdRef.current++;                                                                                                                      
+      416 -          newObstacles.push({                                                                                                                           
+      417 -            id: obstacleIdRef.current,                                                                                                                  
+      368 +          const color = pickupColors[pickupIdRef.current % pickupColors.length];                                                                        
+      369 +          pickupIdRef.current++;                                                                                                                        
+      370 +          newPickups.push({                                                                                                                             
+      371 +            id: pickupIdRef.current,                                                                                                                    
+      372              x: lane * 5,                                                                                                                                
+      419 -            z: 280 + newTime * newSpeed * 35,                                                                                                           
+      420 -            type: Math.random() > 0.72 ? 1 : 0,                                                                                                         
+      373 +            z: 300 + scrollZ,                                                                                                                           
+      374 +            color,                                                                                                                                      
+      375              collected: false,                                                                                                                           
+      376            });                                                                                                                                           
+      377          }                                                                                                                                               
+      378                                                                                                                                                          
+      425 -        // Remove old obstacles                                                                                                                         
+      426 -        const scrollZ = newTime * newSpeed * 35;                                                                                                        
+      427 -        newObstacles = newObstacles.filter(o => o.z - scrollZ > -15);                                                                                   
+      379 +        // Remove old pickups                                                                                                                           
+      380 +        newPickups = newPickups.filter(p => p.z - scrollZ > -20);                                                                                       
+      381                                                                                                                                                          
+      429 -        // Collision detection                                                                                                                          
+      430 -        const playerX = newLane * 5;                                                                                                                    
+      431 -        for (const obs of newObstacles) {                                                                                                               
+      432 -          if (obs.collected) continue;                                                                                                                  
+      433 -          const obsZ = obs.z - scrollZ;                                                                                                                 
+      434 -          if (obsZ > -1 && obsZ < 5 && Math.abs(obs.x - playerX) < 2.2) {                                                                               
+      435 -            if (obs.type === 1) {                                                                                                                       
+      436 -              // Boost - mark as collected, don't remove immediately                                                                                    
+      437 -              updateGameScore(500);                                                                                                                     
+      438 -              newSpeed = Math.min(newSpeed + 0.2, 3.8);                                                                                                 
+      439 -              newObstacles = newObstacles.map(o =>                                                                                                      
+      440 -                o.id === obs.id ? { ...o, collected: true } : o                                                                                         
+      441 -              );                                                                                                                                        
+      442 -            } else {                                                                                                                                    
+      443 -              // Crash                                                                                                                                  
+      444 -              endGame();                                                                                                                                
+      445 -              return prev;                                                                                                                              
+      446 -            }                                                                                                                                           
+      382 +        // Collision detection - use laneRef for accurate position                                                                                      
+      383 +        const playerX = laneRef.current * 5;                                                                                                            
+      384 +        for (const pickup of newPickups) {                                                                                                              
+      385 +          if (pickup.collected) continue;                                                                                                               
+      386 +          const pz = pickup.z - scrollZ;                                                                                                                
+      387 +          if (pz > -2 && pz < 6 && Math.abs(pickup.x - playerX) < 2.5) {                                                                                
+      388 +            // Collect!                                                                                                                                 
+      389 +            updateGameScore(1000);                                                                                                                      
+      390 +            newSpeed = Math.min(newSpeed + 0.15, 8);                                                                                                    
+      391 +            newColors = [...newColors, pickup.color].slice(-20); // Keep last 20 colors                                                                 
+      392 +            newPickups = newPickups.map(p =>                                                                                                            
+      393 +              p.id === pickup.id ? { ...p, collected: true } : p                                                                                        
+      394 +            );                                                                                                                                          
+      395            }                                                                                                                                             
+      396          }                                                                                                                                               
+      397                                                                                                                                                          
+      398          // Update game                                                                                                                                  
+      399          distanceRef.current += newSpeed;                                                                                                                
+      452 -        newSpeed = Math.min(newSpeed + 0.0003, 3.8);                                                                                                    
+      400 +        newSpeed = Math.min(newSpeed + 0.0002, 8);                                                                                                      
+      401          updateSpeed(Math.round(newSpeed * 1000));                                                                                                       
+      402          updateDistance(Math.round(distanceRef.current));                                                                                                
+      403          updateGameScore(1);                                                                                                                             
+      404                                                                                                                                                          
+      405          return {                                                                                                                                        
+      458 -          lane: newLane,                                                                                                                                
+      406 +          lane: laneRef.current,                                                                                                                        
+      407            speed: newSpeed,                                                                                                                              
+      460 -          obstacles: newObstacles,                                                                                                                      
+      408 +          pickups: newPickups,                                                                                                                          
+      409            time: newTime,                                                                                                                                
+      410 +          collectedColors: newColors,                                                                                                                   
+      411          };                                                                                                                                              
+      412        });                                                                                                                                               
+      413      }, 16);                                                                                                                                             
+      414                                                                                                                                                          
+      415      return () => clearInterval(interval);                                                                                                               
+      467 -  }, [game.isPlaying, endGame, updateGameScore, updateSpeed, updateDistance]);                                                                          
+      416 +  }, [game.isPlaying, updateGameScore, updateSpeed, updateDistance]);                                                                                   
+      417                                                                                                                                                          
+      418    if (!isClient) {                                                                                                                                      
+      470 -    return <div className="w-full max-w-4xl mx-auto aspect-[16/9] rounded-xl bg-[#050510] border border-white/10" />;                                   
+      419 +    return <div className="w-full max-w-4xl mx-auto aspect-[16/9] rounded-xl bg-[#030308] border border-white/10" />;                                   
+      420    }                                                                                                                                                     
+      421                                                                                                                                                          
+      422    const carColor = carColors[config.color] || '#1a5fd4';                                                                                                
+     ...                                                                                                                                                           
+      429            gl={{ antialias: true, powerPreference: 'high-performance' }}                                                                                 
+      430            dpr={[1, 2]}                                                                                                                                  
+      431          >                                                                                                                                               
+      483 -          <color attach="background" args={['#030308']} />                                                                                              
+      484 -          <Scene gameState={gameState} carColor={carColor} />                                                                                           
+      432 +          <color attach="background" args={['#020206']} />                                                                                              
+      433 +          <Scene gameState={gameState} carColor={carColor} laneRef={laneRef} />                                                                         
+      434          </Canvas>                                                                                                                                       
+      435        </div>                                                                                                                                            
+      436                                                                                                                                                          
+     ...                                                                                                                                                           
+      440            <p className="text-[10px] text-white/40 uppercase tracking-wider">Score</p>                                                                   
+      441            <p className="text-2xl font-bold font-mono text-white">{game.score.toLocaleString()}</p>                                                      
+      442          </div>                                                                                                                                          
+      443 +        <div className="bg-black/70 backdrop-blur-md px-4 py-2 rounded-lg border border-white/10">                                                      
+      444 +          <p className="text-[10px] text-white/40 uppercase tracking-wider">Colors</p>                                                                  
+      445 +          <div className="flex gap-1 mt-1">                                                                                                             
+      446 +            {gameState.collectedColors.slice(-8).map((c, i) => (                                                                                        
+      447 +              <div key={i} className="w-4 h-4 rounded-full" style={{ backgroundColor: c }} />                                                           
+      448 +            ))}                                                                                                                                         
+      449 +          </div>                                                                                                                                        
+      450 +        </div>                                                                                                                                          
+      451          <div className="bg-black/70 backdrop-blur-md px-4 py-2 rounded-lg text-right border border-white/10">                                           
+      452            <p className="text-[10px] text-white/40 uppercase tracking-wider">Velocity</p>                                                                
+      453            <p className="text-2xl font-bold font-mono text-white">{game.speed.toLocaleString()} <span className="text-xs text-white/50">km/s</span       
+           ></p>                                                                                                                                                   
+     ...                                                                                                                                                           
+      483                      transition={{ type: 'spring', damping: 10 }}                                                                                        
+      484                      className="text-6xl mb-4"                                                                                                           
+      485                    >                                                                                                                                     
+      529 -                    💥                                                                                                                                  
+      486 +                    🌈                                                                                                                                  
+      487                    </motion.div>                                                                                                                         
+      531 -                  <h3 className="text-3xl font-bold mb-2 text-white">COLLISION</h3>                                                                     
+      488 +                  <h3 className="text-3xl font-bold mb-2 text-white">RUN COMPLETE</h3>                                                                  
+      489                    <p className="text-white/60 mb-1">Score: {game.score.toLocaleString()}</p>                                                            
+      490 +                  <p className="text-white/60 mb-1">Colors: {gameState.collectedColors.length}</p>                                                      
+      491                    <p className="text-white/40 mb-6">Distance: {game.distance.toLocaleString()} light-seconds</p>                                        
+      492                  </>                                                                                                                                     
+      493                ) : (                                                                                                                                     
+      494                  <>                                                                                                                                      
+      495                    <motion.div                                                                                                                           
+      538 -                    animate={{ y: [0, -10, 0] }}                                                                                                        
+      496 +                    animate={{ y: [0, -10, 0], rotate: [0, 10, -10, 0] }}                                                                               
+      497                      transition={{ duration: 2, repeat: Infinity }}                                                                                      
+      498                      className="text-6xl mb-4"                                                                                                           
+      499                    >                                                                                                                                     
+      500                      🚀                                                                                                                                  
+      501                    </motion.div>                                                                                                                         
+      544 -                  <h3 className="text-3xl font-bold mb-4 text-white">WARP TUNNEL</h3>                                                                   
+      502 +                  <h3 className="text-3xl font-bold mb-4 text-white">COLOR RUSH</h3>                                                                    
+      503                    <div className="text-white/50 text-sm mb-6 space-y-2">                                                                                
+      504                      <p className="flex items-center justify-center gap-2">                                                                              
+      505                        <span className="px-2 py-0.5 bg-white/10 rounded text-xs">← →</span> or                                                           
+      506                        <span className="px-2 py-0.5 bg-white/10 rounded text-xs">A D</span> to steer                                                     
+      507                      </p>                                                                                                                                
+      550 -                    <p><span className="text-green-400">●</span> Collect energy orbs for boost</p>                                                      
+      551 -                    <p><span className="text-red-400">■</span> Avoid barriers</p>                                                                       
+      508 +                    <p>Collect orbs to add colors & speed!</p>                                                                                          
+      509 +                    <p className="text-xs text-white/30">The tunnel reacts to your colors</p>                                                           
+      510                    </div>                                                                                                                                
+      511                  </>                                                                                                                                     
+      512                )}                                                                                                                                        
+     ...                                                                                                                                                           
+      514                  onClick={handleStart}                                                                                                                   
+      515                  className="px-8 py-3 bg-white text-black font-semibold rounded-full hover:bg-white/90 transition-colors"                                
+      516                >                                                                                                                                         
+      559 -                {game.score > 0 ? 'Try Again' : 'Press SPACE to Start'}                                                                                 
+      517 +                {game.score > 0 ? 'Go Again' : 'Press SPACE to Start'}                                                                                  
+      518                </button>                                                                                                                                 
+      519              </div>                                                                                                                                      
+      520            </motion.div>                                                                                                                                 
+                                                                                                                                                                   
+∴ Thinking…                                                                                                                                                        
+                                                                                                                                                                   
+  Done! Now the game:                                                                                                                                              
+  - Starts at speed 3 (3000 km/s)                                                                                                                                  
+  - No obstacles/barriers - only color pickups                                                                                                                     
+  - Each pickup adds its color to the tunnel (rings, lane markers, fog, floor all react)                                                                           
+  - Lane position is tracked via ref to prevent teleporting                                                                                                        
+  - HUD shows collected colors as colored dots                                                                                                                     
+  - Tunnel gets more colorful as you collect more pickups                                                                                                          
+                                                                                                                                                                   
+⏺ Done! Now it's COLOR RUSH:                                                                                             09:17 PM  claude-opus-4-5-20251101        
+                                                                                                                                                                   
+  - Starts at 3000 km/s                                                                                                                                            
+  - No obstacles - only color pickups                                                                                                                              
+  - Each pickup adds its color to the tunnel (rings, lane markers, fog, ceiling, floor all react)                                                                  
+  - Lane movement via ref - no more teleporting                                                                                                                    
+  - HUD shows your collected color palette                                                                                                                         
+  - Max speed 8000 km/s                                                                                                                                            
+                                                                                                                                                                   
+  Refresh http://localhost:3000 → Experience → SPACE → collect 'em all 🌈                                                                                          
+                                                                                                                                                                   
+✻ Baked for 1m 39s                                                                                                                                                 
+                                                                                                                                                                   
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Showing detailed transcript · ctrl+o to toggle · ctrl+e to collapse                                                                                              
+
