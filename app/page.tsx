@@ -143,7 +143,7 @@ function getMockMCPQueryResults() {
   ];
 }
 
-export default function AutoForkConsole() {
+export default function Cache() {
   const [anchors, setAnchors] = useState<Anchor[]>([]);
   const [eventLog, setEventLog] = useState<EventLogEntry[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState(() => generateId());
