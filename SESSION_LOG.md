@@ -1,7 +1,14 @@
 # AutoFork Console - Project History
 
 ## What This Is
-A tool for managing agent memory across long coding sessions. Detects when to "fork" (start fresh with compact context) and generates resume prompts to carry forward essential state.
+A **self-improving agent memory system** — not just session management, but a learning layer that:
+
+1. **Tracks positive outcomes** — Captures what works when agents succeed (deploys, tests pass, features complete)
+2. **Compresses successful patterns** — Turns verbose transcripts into compact, reusable templates
+3. **Builds a behavior cache** — Library of "good examples" that future sessions can reference
+4. **Feeds back into agents** — Resume prompts that include proven approaches, not just raw context
+
+The goal: Agents that get better over time by learning from their own successes.
 
 ---
 
@@ -66,6 +73,49 @@ A tool for managing agent memory across long coding sessions. Detects when to "f
 - [ ] **Anchor diffing**: Show what changed between anchors
 - [ ] **Multi-session view**: Compare anchors across different sessions
 - [ ] **Integration with Claude Code**: Auto-inject resume prompt on new session
+
+---
+
+## Big Picture Vision
+
+### The Learning Loop
+```
+Session succeeds → Capture what worked → Compress to pattern → Store in cache → Feed to future sessions
+```
+
+### Core Concepts
+
+**1. Positive Outcome Tracking**
+- Detect success: deploys, tests pass, PRs merged, user says "done"
+- Capture the full context: what was the goal, what approach worked, what files changed
+- Tag with metadata: project type, tech stack, problem category
+
+**2. Pattern Compression**
+- Use claudestorm's Neptune/hypernym pipeline to compress verbose transcripts
+- Extract the "how" not just the "what" — the reasoning, not just the code
+- Create reusable templates: "Here's how we typically solve auth issues"
+
+**3. Behavior Cache**
+- Library of gold anchors organized by problem type
+- Searchable: "How did we handle rate limiting before?"
+- Versioned: Track which patterns work best over time
+
+**4. Feedback Loop**
+- When starting a new session, search cache for similar problems
+- Inject relevant patterns into system prompt or resume prompt
+- Agent starts with "Here's what worked before" instead of blank slate
+
+### Integration Points with Claudestorm
+- **Float pipeline**: Compress successful sessions into hypernym representations
+- **Conversation analysis**: Detect success/failure patterns
+- **AST analysis**: Understand code structure of successful changes
+- **Lighthouse**: Index and search past successes
+
+### Metrics to Track
+- Success rate by problem type
+- Time to success with/without cached patterns
+- Pattern reuse frequency
+- Drift recovery rate (how often gold anchors save sessions)
 
 ---
 
