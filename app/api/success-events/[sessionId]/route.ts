@@ -65,12 +65,17 @@ function detectSuccessEvents(
   const combinedOutput = [...recentAssistantMessages, ...toolResults].join("\n");
 
   // Git commits - extract hash and message
-  const commitMatch = combinedOutput.match(/\[([\w\/-]+)\s+([a-f0-9]{7,})\]\s+(.+?)(?:\n|$)/i);
+  // Match raw git output [branch hash] OR Claude's summary "commit `hash`"
+  const commitMatch = combinedOutput.match(/\[([\w\/-]+)\s+([a-f0-9]{7,})\]\s+(.+?)(?:\n|$)/i)
+    || combinedOutput.match(/commit\s+[`'"]?([a-f0-9]{7,})[`'"]?/i);
   if (commitMatch) {
+    // Handle both formats: [branch hash] msg OR commit `hash`
+    const hash = commitMatch[2] || commitMatch[1];
+    const msg = commitMatch[3] || "committed";
     events.push({
       type: "git_commit",
       timestamp: now,
-      details: `${commitMatch[2]} ${commitMatch[3].slice(0, 40)}`,
+      details: `[${hash}] ${msg.slice(0, 40)}`,
       confidence: PATTERNS.git_commit.confidence,
     });
   }
@@ -121,24 +126,8 @@ export async function GET(
   const { sessionId } = await params;
   const sinceTimestamp = request.nextUrl.searchParams.get("since_timestamp");
 
-  // Try claudestorm's endpoint first
-  try {
-    const url = sinceTimestamp
-      ? `${CLAUDESTORM_API}/api/autofork/session/${sessionId}/success-events?since_timestamp=${encodeURIComponent(sinceTimestamp)}`
-      : `${CLAUDESTORM_API}/api/autofork/session/${sessionId}/success-events`;
-
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(2000),
-      cache: "no-store"
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      return NextResponse.json(data);
-    }
-  } catch {
-    // Fallback to local detection
-  }
+  // Skip claudestorm's success-events - use local detection for better commit matching
+  // (Claudestorm endpoint exists but doesn't parse Claude's commit summaries)
 
   // Fallback: fetch anchor data and detect locally
   try {

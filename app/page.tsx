@@ -573,6 +573,270 @@ export default function AutoForkConsole() {
         </div>
       </div>
 
+      {/* Before/After Trajectory Visualization */}
+      <div className="max-w-7xl mx-auto mb-6">
+        <div className="bg-gradient-to-b from-zinc-900/80 to-zinc-900/60 rounded-xl p-5 border border-zinc-800/50 backdrop-blur">
+          <h2 className="text-sm font-semibold mb-2 text-zinc-300 tracking-wide text-center">
+            Replay for Real, Caché with Style <span className="text-zinc-500 font-normal">(Session Task Streams)</span>
+          </h2>
+          <p className="text-xs text-zinc-500 text-center">Overlapping tasks compete for focus — cached patterns find the successful paths.</p>
+          <p className="text-xs text-zinc-100 text-center mb-4">Subsequent runs enable auditable completion, tested with Weave.</p>
+
+          <svg viewBox="0 0 800 200" className="w-full h-52">
+            {/* BEFORE - overlapping conflicting tasks in one session */}
+            <g>
+              <text x="45" y="30" textAnchor="end" fill="#ef4444" fontSize="10" fontWeight="600">BEFORE</text>
+              <text x="45" y="42" textAnchor="end" fill="#52525b" fontSize="7">overlapping intents</text>
+
+              {/* Multiple task streams overlapping - showing conflicts */}
+              {/* Task A: "add auth" - scattered, some fail */}
+              <g>
+                <text x="60" y="55" fill="#8b5cf6" fontSize="7">add auth</text>
+                {[[80, 0.3], [150, 0.9], [280, 0.25], [400, 0.35], [520, 0.8]].map(([x, op], i) => (
+                  <circle key={`a-${i}`} cx={x} cy="60" r="5" fill="#8b5cf6" opacity={op} />
+                ))}
+                <path d="M 80 60 Q 115 45 150 60 Q 215 75 280 60 Q 340 50 400 60 Q 460 70 520 60" fill="none" stroke="#8b5cf6" strokeWidth="1" strokeOpacity="0.3" strokeDasharray="3,3" />
+              </g>
+
+              {/* Task B: "fix db query" - overlaps with A, conflicts */}
+              <g>
+                <text x="60" y="80" fill="#0ea5e9" fontSize="7">fix db query</text>
+                {[[120, 0.25], [200, 0.3], [320, 0.85], [450, 0.3], [580, 0.25]].map(([x, op], i) => (
+                  <circle key={`b-${i}`} cx={x} cy="85" r="5" fill="#0ea5e9" opacity={op} />
+                ))}
+                <path d="M 120 85 Q 160 95 200 85 Q 260 70 320 85 Q 385 95 450 85 Q 515 75 580 85" fill="none" stroke="#0ea5e9" strokeWidth="1" strokeOpacity="0.3" strokeDasharray="3,3" />
+              </g>
+
+              {/* Task C: "update API" - also overlapping */}
+              <g>
+                <text x="60" y="105" fill="#10b981" fontSize="7">update API</text>
+                {[[100, 0.3], [180, 0.25], [350, 0.3], [480, 0.85], [620, 0.3]].map(([x, op], i) => (
+                  <circle key={`c-${i}`} cx={x} cy="110" r="5" fill="#10b981" opacity={op} />
+                ))}
+                <path d="M 100 110 Q 140 100 180 110 Q 265 120 350 110 Q 415 100 480 110 Q 550 120 620 110" fill="none" stroke="#10b981" strokeWidth="1" strokeOpacity="0.3" strokeDasharray="3,3" />
+              </g>
+
+              {/* Conflict zones - where tasks overlap and fail */}
+              <rect x="110" y="50" width="50" height="70" fill="#ef4444" opacity="0.08" rx="4" />
+              <rect x="270" y="50" width="60" height="70" fill="#ef4444" opacity="0.08" rx="4" />
+              <rect x="440" y="50" width="50" height="70" fill="#ef4444" opacity="0.08" rx="4" />
+              <text x="135" y="130" fill="#ef4444" fontSize="6" textAnchor="middle" opacity="0.5">conflict</text>
+              <text x="300" y="130" fill="#ef4444" fontSize="6" textAnchor="middle" opacity="0.5">conflict</text>
+              <text x="465" y="130" fill="#ef4444" fontSize="6" textAnchor="middle" opacity="0.5">conflict</text>
+
+              <text x="750" y="85" textAnchor="end" fill="#ef4444" fontSize="8" opacity="0.7">~35% complete</text>
+            </g>
+
+            {/* Divider */}
+            <line x1="55" y1="145" x2="780" y2="145" stroke="#3f3f46" strokeWidth="1" strokeDasharray="4,4" />
+            <text x="420" y="143" fill="#71717a" fontSize="8" textAnchor="middle">↓ Caché identifies successful paths ↓</text>
+
+            {/* AFTER - disambiguated, sequential, successful */}
+            <g>
+              <text x="45" y="165" textAnchor="end" fill="#10b981" fontSize="10" fontWeight="600">AFTER</text>
+              <text x="45" y="177" textAnchor="end" fill="#52525b" fontSize="7">cached patterns</text>
+
+              {/* Task A: "add auth" - clean path found */}
+              <g>
+                <text x="60" y="168" fill="#8b5cf6" fontSize="7">add auth</text>
+                {[[100, 0.9], [160, 0.9]].map(([x, op], i) => (
+                  <circle key={`a2-${i}`} cx={x} cy="173" r="5" fill="#8b5cf6" opacity={op} />
+                ))}
+                <path d="M 100 173 Q 130 160 160 173" fill="none" stroke="#8b5cf6" strokeWidth="2" strokeOpacity="0.7" />
+              </g>
+
+              {/* Task B: "fix db query" - clean path found */}
+              <g>
+                <text x="220" y="168" fill="#0ea5e9" fontSize="7">fix db query</text>
+                {[[280, 0.9], [340, 0.9]].map(([x, op], i) => (
+                  <circle key={`b2-${i}`} cx={x} cy="173" r="5" fill="#0ea5e9" opacity={op} />
+                ))}
+                <path d="M 280 173 Q 310 160 340 173" fill="none" stroke="#0ea5e9" strokeWidth="2" strokeOpacity="0.7" />
+              </g>
+
+              {/* Task C: "update API" - clean path found */}
+              <g>
+                <text x="400" y="168" fill="#10b981" fontSize="7">update API</text>
+                {[[460, 0.9], [520, 0.9]].map(([x, op], i) => (
+                  <circle key={`c2-${i}`} cx={x} cy="173" r="5" fill="#10b981" opacity={op} />
+                ))}
+                <path d="M 460 173 Q 490 160 520 173" fill="none" stroke="#10b981" strokeWidth="2" strokeOpacity="0.7" />
+              </g>
+
+              {/* Success indicators */}
+              <text x="130" y="192" fill="#8b5cf6" fontSize="6" textAnchor="middle">✓</text>
+              <text x="310" y="192" fill="#0ea5e9" fontSize="6" textAnchor="middle">✓</text>
+              <text x="490" y="192" fill="#10b981" fontSize="6" textAnchor="middle">✓</text>
+
+              <text x="750" y="175" textAnchor="end" fill="#10b981" fontSize="8" opacity="0.9">~92% complete</text>
+            </g>
+          </svg>
+
+          {/* Legend */}
+          <div className="flex justify-center gap-6 mt-3 pt-3 border-t border-zinc-800/50">
+            <span className="flex items-center gap-2 text-xs">
+              <span className="w-3 h-3 rounded-full opacity-30" style={{background: 'linear-gradient(135deg, #8b5cf6, #0ea5e9)'}} />
+              <span className="text-zinc-500">failed attempt</span>
+            </span>
+            <span className="flex items-center gap-2 text-xs">
+              <span className="w-3 h-3 rounded-full bg-emerald-500 opacity-90" />
+              <span className="text-zinc-400">successful path</span>
+            </span>
+            <span className="flex items-center gap-2 text-xs">
+              <span className="w-4 h-3 rounded bg-red-500/20" />
+              <span className="text-zinc-500">conflict zone</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Learning Loop Visualization */}
+      <div className="max-w-7xl mx-auto mb-6">
+        <div className="bg-zinc-900/70 rounded-xl p-6 border border-zinc-800/50 backdrop-blur">
+          <h2 className="text-sm font-semibold mb-6 text-zinc-300 uppercase tracking-wide text-center">The Learning Loop</h2>
+
+          {/* Flow Diagram */}
+          <div className="flex items-center justify-center gap-2 md:gap-4 mb-8">
+            {/* Step 1: Work */}
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 md:w-20 md:h-20 rounded-full bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center shadow-lg shadow-blue-500/20 border-2 border-blue-400/30">
+                <span className="text-2xl md:text-3xl">💻</span>
+              </div>
+              <span className="text-xs text-zinc-400 mt-2 text-center">You work<br/>with Claude</span>
+            </div>
+
+            {/* Arrow */}
+            <div className="text-zinc-600 text-2xl animate-pulse">→</div>
+
+            {/* Step 2: Win */}
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 md:w-20 md:h-20 rounded-full bg-gradient-to-br from-emerald-600 to-emerald-800 flex items-center justify-center shadow-lg shadow-emerald-500/20 border-2 border-emerald-400/30">
+                <span className="text-2xl md:text-3xl">✓</span>
+              </div>
+              <span className="text-xs text-zinc-400 mt-2 text-center">Claude<br/>wins</span>
+            </div>
+
+            {/* Arrow */}
+            <div className="text-zinc-600 text-2xl animate-pulse">→</div>
+
+            {/* Step 3: Detect */}
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 md:w-20 md:h-20 rounded-full bg-gradient-to-br from-amber-600 to-orange-700 flex items-center justify-center shadow-lg shadow-amber-500/20 border-2 border-amber-400/30 relative">
+                <span className="text-2xl md:text-3xl">👁</span>
+                <span className="absolute -top-1 -right-1 w-5 h-5 bg-pink-500 rounded-full text-[10px] flex items-center justify-center font-bold animate-bounce">
+                  {weaveHistory.length > 0 ? weaveHistory.length : '?'}
+                </span>
+              </div>
+              <span className="text-xs text-zinc-400 mt-2 text-center">Caché<br/>detects</span>
+            </div>
+
+            {/* Arrow */}
+            <div className="text-zinc-600 text-2xl animate-pulse">→</div>
+
+            {/* Step 4: Store */}
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 md:w-20 md:h-20 rounded-full bg-gradient-to-br from-violet-600 to-purple-800 flex items-center justify-center shadow-lg shadow-violet-500/20 border-2 border-violet-400/30">
+                <span className="text-2xl md:text-3xl">🧠</span>
+              </div>
+              <span className="text-xs text-zinc-400 mt-2 text-center">Weave<br/>stores</span>
+            </div>
+
+            {/* Arrow */}
+            <div className="text-zinc-600 text-2xl animate-pulse">→</div>
+
+            {/* Step 5: Learn */}
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 md:w-20 md:h-20 rounded-full bg-gradient-to-br from-sky-600 to-cyan-700 flex items-center justify-center shadow-lg shadow-sky-500/20 border-2 border-sky-400/30">
+                <span className="text-2xl md:text-3xl">🚀</span>
+              </div>
+              <span className="text-xs text-zinc-400 mt-2 text-center">Future Claude<br/>learns</span>
+            </div>
+          </div>
+
+          {/* Event Type Breakdown - Visual */}
+          <div className="border-t border-zinc-800 pt-5">
+            <div className="text-xs text-zinc-500 mb-3 text-center">PATTERNS BY TYPE</div>
+            <div className="flex justify-center gap-6 flex-wrap">
+              {(() => {
+                const typeCounts: Record<string, number> = {};
+                weaveHistory.forEach(call => {
+                  const t = (call.inputs as Record<string, string>)?.success_type || 'unknown';
+                  typeCounts[t] = (typeCounts[t] || 0) + 1;
+                });
+                const typeConfig: Record<string, { color: string; icon: string }> = {
+                  git_commit: { color: 'emerald', icon: '📦' },
+                  commit: { color: 'emerald', icon: '📦' },
+                  tests_passed: { color: 'sky', icon: '✅' },
+                  deploy: { color: 'violet', icon: '🚀' },
+                  deploy_success: { color: 'violet', icon: '🚀' },
+                  user_confirmation: { color: 'pink', icon: '✨' },
+                  build_success: { color: 'amber', icon: '🔨' },
+                };
+                return Object.entries(typeCounts).map(([type, count]) => {
+                  const config = typeConfig[type] || { color: 'zinc', icon: '📄' };
+                  return (
+                    <div key={type} className="flex flex-col items-center">
+                      <div className={`w-12 h-12 rounded-lg bg-${config.color}-900/50 border border-${config.color}-700/50 flex items-center justify-center mb-1`}
+                           style={{
+                             backgroundColor: config.color === 'emerald' ? 'rgba(6,78,59,0.5)' :
+                                              config.color === 'sky' ? 'rgba(12,74,110,0.5)' :
+                                              config.color === 'violet' ? 'rgba(76,29,149,0.5)' :
+                                              config.color === 'pink' ? 'rgba(131,24,67,0.5)' :
+                                              config.color === 'amber' ? 'rgba(120,53,15,0.5)' : 'rgba(39,39,42,0.5)',
+                             borderColor: config.color === 'emerald' ? 'rgba(16,185,129,0.5)' :
+                                          config.color === 'sky' ? 'rgba(14,165,233,0.5)' :
+                                          config.color === 'violet' ? 'rgba(139,92,246,0.5)' :
+                                          config.color === 'pink' ? 'rgba(236,72,153,0.5)' :
+                                          config.color === 'amber' ? 'rgba(245,158,11,0.5)' : 'rgba(63,63,70,0.5)'
+                           }}>
+                        <span className="text-xl">{config.icon}</span>
+                      </div>
+                      <span className="text-lg font-bold text-zinc-200">{count}</span>
+                      <span className="text-[10px] text-zinc-500">{type.replace(/_/g, ' ')}</span>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          </div>
+
+          {/* Recent Wins Timeline */}
+          {weaveHistory.length > 0 && (
+            <div className="border-t border-zinc-800 pt-5 mt-5">
+              <div className="text-xs text-zinc-500 mb-3 text-center">RECENT WINS</div>
+              <div className="relative">
+                {/* Timeline line */}
+                <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-gradient-to-b from-emerald-500 via-violet-500 to-sky-500 opacity-30" />
+
+                <div className="space-y-3">
+                  {weaveHistory.slice(0, 5).map((call, i) => {
+                    const type = (call.inputs as Record<string, string>)?.success_type || 'unknown';
+                    const output = (call.inputs as Record<string, string>)?.output || '';
+                    const isLeft = i % 2 === 0;
+                    return (
+                      <div key={call.id} className={`flex items-center gap-3 ${isLeft ? 'flex-row' : 'flex-row-reverse'}`}>
+                        <div className={`flex-1 ${isLeft ? 'text-right' : 'text-left'}`}>
+                          <div className={`inline-block bg-zinc-800/80 rounded-lg px-3 py-2 max-w-xs`}>
+                            <div className="text-xs text-zinc-400 mb-1">
+                              {type.replace(/_/g, ' ')}
+                            </div>
+                            <div className="text-sm text-zinc-200 truncate">
+                              {output.split('\n')[0]?.replace(/^TASK:\s*/, '').slice(0, 40) || 'Pattern saved'}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="w-3 h-3 rounded-full bg-violet-500 shadow-lg shadow-violet-500/50 flex-shrink-0 z-10" />
+                        <div className="flex-1" />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Review Queue */}
       {/* Your Contributions */}
       {contributions.length > 0 && (
