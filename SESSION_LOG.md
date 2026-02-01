@@ -1,5 +1,36 @@
 # AutoFork Console - Project History
 
+## Why We're Building This
+
+**Hackathon project** showcasing Claudestorm's value proposition:
+- Agents forget everything between sessions
+- Successful patterns vanish into token limits
+- Every new session starts from scratch
+
+**The pitch**: Cache what works. Surface it later. Agents get better over time.
+
+**Claudestorm** does the heavy lifting (tracking, compression). **AutoFork** is the showcase UI that demonstrates the value of org-wide pattern caching.
+
+---
+
+## Resume Prompt (Start Here)
+
+```
+#magic Continue work on AutoFork Console.
+
+First, query Weave for what worked last time:
+- Project: autofork-console
+- Query: "show recent successful patterns"
+
+Use those patterns to inform your approach.
+
+Current state: SESSION_LOG.md
+Run: Terminal 1: cd ~/Desktop/source/claudestorm && CLAUDESTORM_DB_DIR=. .venv/bin/python -m uvicorn core.autofork_api:app --port 8100
+     Terminal 2: cd ~/Desktop/source/hackathon_site && npm run dev
+```
+
+---
+
 ## What This Is
 A **self-improving agent memory system** — not just session management, but a learning layer that:
 
