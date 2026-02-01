@@ -88,15 +88,16 @@ function detectSuccessEvents(
   }
 
   // Deploy success
-  if (PATTERNS.deploy_success.output.test(combinedOutput) &&
-      !PATTERNS.deploy_success.exclude?.test(combinedOutput)) {
+  if (PATTERNS.deploy_success.output.test(combinedOutput)) {
     const urlMatch = combinedOutput.match(/https:\/\/[\w.-]+\.(vercel|netlify)\.app[^\s)"]*/);
-    events.push({
-      type: "deploy_success",
-      timestamp: now,
-      details: urlMatch ? urlMatch[0] : "Deployment successful",
-      confidence: PATTERNS.deploy_success.confidence,
-    });
+    if (urlMatch) {
+      events.push({
+        type: "deploy_success",
+        timestamp: now,
+        details: urlMatch[0],
+        confidence: PATTERNS.deploy_success.confidence,
+      });
+    }
   }
 
   // Build success
