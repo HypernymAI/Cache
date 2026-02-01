@@ -1,5 +1,5 @@
 # Caché
-
+See at https://cache.hypernym.ai
 **Self-improving agents through cached successes.**
 
 Agents forget everything between sessions. Caché captures what works and makes it queryable—so future agents start smarter.
@@ -99,4 +99,4 @@ Every agent session is a learning opportunity. Caché ensures those lessons aren
 
 ---
 
-Built for W&B Hackathon 2025
+Built for W&B Hackathon (WeaveHacks 3) 2026
