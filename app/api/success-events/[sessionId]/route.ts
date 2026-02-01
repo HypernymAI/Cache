@@ -9,29 +9,32 @@ interface SuccessEvent {
   confidence: number;
 }
 
-// Deterministic success detection patterns
+// Deterministic success detection patterns - STRICT to avoid noise
 const PATTERNS = {
   git_commit: {
-    tool: /Bash.*git commit/i,
-    output: /\[[\w-]+\s+[\da-f]+\]|committed|create mode/i,
+    // Only match actual git commit output: [branch hash] message
+    output: /\[[\w\/-]+\s+[a-f0-9]{7,}\]\s+\S+/i,
     confidence: 0.9,
   },
   tests_passed: {
-    output: /(\d+)\s*(tests?\s+)?pass(ed)?|✓|PASS|All tests|0 failed/i,
-    exclude: /fail(ed)?|error/i,
+    // Require actual test count, not just "pass" anywhere
+    output: /(\d+)\s+(tests?|specs?)\s+pass(ed|ing)?|✓\s+\d+\s+(tests?|passing)|PASSED.*\d+/i,
+    exclude: /fail(ed|ing)?:\s*[1-9]|error/i,
     confidence: 0.85,
   },
   deploy_success: {
-    output: /deployed|https:\/\/([\w-]+\.vercel\.app|[\w-]+\.netlify\.app)|Production:|Successfully pushed/i,
-    exclude: /fail|error/i,
-    confidence: 0.9,
+    // Require actual deployment URL
+    output: /https:\/\/[\w-]+\.(vercel\.app|netlify\.app|railway\.app)/i,
+    confidence: 0.95,
   },
-  user_confirmation: {
-    input: /^(done|thanks|thank you|perfect|looks good|great|awesome|that works|ship it|lgtm|nice)[\s.!]*$/i,
-    confidence: 0.7,
+  user_anchor: {
+    // Explicit "magic" trigger - user deliberately marking a checkpoint
+    input: /#?magic/i,
+    confidence: 0.8,
   },
   build_success: {
-    output: /compiled successfully|Build succeeded|Built in|build complete|webpack.*compiled/i,
+    // Require specific build success messages with timing
+    output: /compiled successfully in \d|Build succeeded|✓ Built in \d+/i,
     exclude: /error|fail/i,
     confidence: 0.8,
   },
@@ -45,29 +48,29 @@ function detectSuccessEvents(
   const events: SuccessEvent[] = [];
   const now = new Date().toISOString();
 
-  // Check user confirmations
+  // Check for explicit "magic" trigger
   for (const msg of recentUserMessages) {
-    if (PATTERNS.user_confirmation.input?.test(msg.trim())) {
+    if (PATTERNS.user_anchor.input?.test(msg)) {
       events.push({
         type: "user_confirmation",
         timestamp: now,
-        details: msg.slice(0, 50),
-        confidence: PATTERNS.user_confirmation.confidence,
+        details: "magic checkpoint",
+        confidence: PATTERNS.user_anchor.confidence,
       });
-      break; // Only one confirmation needed
+      break;
     }
   }
 
   // Check tool outputs for success patterns
   const combinedOutput = [...recentAssistantMessages, ...toolResults].join("\n");
 
-  // Git commits
-  if (PATTERNS.git_commit.output.test(combinedOutput)) {
-    const match = combinedOutput.match(/\[[\w-]+\s+([\da-f]+)\]/);
+  // Git commits - extract hash and message
+  const commitMatch = combinedOutput.match(/\[([\w\/-]+)\s+([a-f0-9]{7,})\]\s+(.+?)(?:\n|$)/i);
+  if (commitMatch) {
     events.push({
       type: "git_commit",
       timestamp: now,
-      details: match ? `Commit ${match[1]}` : "Commit successful",
+      details: `${commitMatch[2]} ${commitMatch[3].slice(0, 40)}`,
       confidence: PATTERNS.git_commit.confidence,
     });
   }

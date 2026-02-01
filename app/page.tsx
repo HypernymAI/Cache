@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 interface Anchor {
   id: string;
@@ -65,6 +65,8 @@ interface SuccessEvent {
   timestamp: string;
   details: string;
   confidence: number;
+  sessionId?: string;
+  sessionLabel?: string; // Human-readable session summary
 }
 
 interface SuccessEventsResponse {
@@ -76,145 +78,23 @@ interface SuccessEventsResponse {
   should_mark_gold: boolean;
 }
 
+// Watched session info
+interface WatchedSessionInfo {
+  sessionId: string;
+  tokens: number;
+  messages: number;
+  lastActivity: string;
+}
+
 const CLAUDESTORM_API = "http://localhost:8100";
 
 function generateId(): string {
   return Math.random().toString(36).substring(2, 11);
 }
 
-function extractAnchorSummary(transcript: string): {
-  summary: string;
-  goal: string;
-  constraints: string;
-  nextSteps: string[];
-} {
-  const lines = transcript.split("\n");
-  const goalLines: string[] = [];
-  const planLines: string[] = [];
-  const constraintLines: string[] = [];
-  const blockerLines: string[] = [];
-
-  for (const line of lines) {
-    const lower = line.toLowerCase().trim();
-    if (!lower) continue;
-
-    if (
-      lower.includes("goal:") ||
-      lower.includes("objective:") ||
-      lower.includes("task:") ||
-      lower.includes("building") ||
-      lower.includes("creating") ||
-      lower.includes("implementing")
-    ) {
-      goalLines.push(line.trim());
-    }
-    if (
-      lower.includes("plan:") ||
-      lower.includes("step") ||
-      lower.includes("next:") ||
-      lower.includes("todo:") ||
-      lower.match(/^\d+\./)
-    ) {
-      planLines.push(line.trim());
-    }
-    if (
-      lower.includes("constraint:") ||
-      lower.includes("must ") ||
-      lower.includes("cannot ") ||
-      lower.includes("require") ||
-      lower.includes("should not")
-    ) {
-      constraintLines.push(line.trim());
-    }
-    if (
-      lower.includes("blocker:") ||
-      lower.includes("error:") ||
-      lower.includes("blocked") ||
-      lower.includes("failed") ||
-      lower.includes("issue:")
-    ) {
-      blockerLines.push(line.trim());
-    }
-  }
-
-  const parts: string[] = [];
-  const goal = goalLines[0] || "Continue from previous context";
-
-  if (goalLines.length > 0) parts.push(`GOAL: ${goalLines.slice(0, 2).join(" | ")}`);
-  if (planLines.length > 0) parts.push(`PLAN: ${planLines.slice(0, 3).join(" → ")}`);
-  if (constraintLines.length > 0) parts.push(`CONSTRAINTS: ${constraintLines.slice(0, 2).join("; ")}`);
-  if (blockerLines.length > 0) parts.push(`BLOCKERS: ${blockerLines.slice(0, 2).join("; ")}`);
-
-  const nextSteps = planLines.length > 0
-    ? planLines.slice(0, 3)
-    : ["Review current state", "Address any blockers", "Continue implementation"];
-
-  return {
-    summary: parts.join("\n") || "No structured content extracted from transcript.",
-    goal,
-    constraints: constraintLines.slice(0, 2).join("; "),
-    nextSteps,
-  };
-}
-
-function checkSuccessSignal(transcript: string): boolean {
-  const lower = transcript.toLowerCase();
-  return ["deployed", "deployment", "vercel", "tests passed", "merged", "published", "success", "completed"].some(
-    (keyword) => lower.includes(keyword)
-  );
-}
-
-function checkDriftSignal(transcript: string): boolean {
-  const lower = transcript.toLowerCase();
-  if (lower.includes("ignore that") || lower.includes("start over") || lower.includes("scratch that")) {
-    return true;
-  }
-
-  const errorRegex = /error:.*$/gim;
-  const errorMatches = transcript.match(errorRegex) || [];
-  const errorSet = new Set<string>();
-  for (const err of errorMatches) {
-    const normalized = err.toLowerCase().trim();
-    if (errorSet.has(normalized)) {
-      return true;
-    }
-    errorSet.add(normalized);
-  }
-
-  return false;
-}
-
-function generateResumePrompt(
-  extracted: { goal: string; constraints: string; nextSteps: string[] },
-  goldAnchor: Anchor | null
-): string {
-  const parts: string[] = [];
-
-  parts.push(`## Current Goal\n${extracted.goal}`);
-
-  if (goldAnchor) {
-    parts.push(`## Last Stable Checkpoint (Gold Anchor)\n${goldAnchor.summary}`);
-  }
-
-  if (extracted.constraints) {
-    parts.push(`## Active Constraints\n${extracted.constraints}`);
-  }
-
-  parts.push(
-    `## Next 3 Concrete Steps\n${extracted.nextSteps.map((s, i) => `${i + 1}. ${s}`).join("\n")}`
-  );
-
-  parts.push(
-    `## Recovery Rule\nIf you drift, restate the goal anchor and continue from the last stable anchor.`
-  );
-
-  return parts.join("\n\n");
-}
-
 const DEFAULT_FORK_THRESHOLD = 64000;
 
 export default function AutoForkConsole() {
-  const [transcript, setTranscript] = useState("");
   const [anchors, setAnchors] = useState<Anchor[]>([]);
   const [eventLog, setEventLog] = useState<EventLogEntry[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState(() => generateId());
@@ -225,18 +105,21 @@ export default function AutoForkConsole() {
   // Claudestorm integration state
   const [claudestormConnected, setClaudestormConnected] = useState(false);
   const [claudestormSessions, setClaudestormSessions] = useState<ClaudestormSession[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [loadingApi, setLoadingApi] = useState(false);
+  const sessionTimestampsRef = useRef<Record<string, string>>({}); // Track last event per session (ref to avoid re-renders)
 
-  // Auto-anchor state
-  const [autoAnchorEnabled, setAutoAnchorEnabled] = useState(true);
-  const [lastEventTimestamp, setLastEventTimestamp] = useState<string | null>(null);
+  // Event tracking state - master ticker across ALL sessions
   const [notification, setNotification] = useState<string | null>(null);
-  const [recentSuccessEvents, setRecentSuccessEvents] = useState<SuccessEvent[]>([]);
-  const [pushingToWeave, setPushingToWeave] = useState(false);
+  const [eventTicker, setEventTicker] = useState<SuccessEvent[]>([]); // All events across all sessions
+  const [pendingAnchors, setPendingAnchors] = useState<Anchor[]>([]); // Awaiting user review
 
+  // Separate mount effect to ensure it always runs
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  // Load from localStorage after mount
+  useEffect(() => {
+    if (!mounted) return;
     try {
       const savedAnchors = localStorage.getItem("autofork_anchors");
       const savedEventLog = localStorage.getItem("autofork_events");
@@ -250,7 +133,7 @@ export default function AutoForkConsole() {
     } catch (e) {
       console.error("Failed to load from localStorage:", e);
     }
-  }, []);
+  }, [mounted]);
 
   useEffect(() => {
     if (mounted) {
@@ -276,7 +159,7 @@ export default function AutoForkConsole() {
     }
   }, [forkThreshold, mounted]);
 
-  // Check claudestorm connection on mount
+  // Check claudestorm connection and fetch all sessions
   useEffect(() => {
     if (!mounted) return;
     const checkClaudestorm = async () => {
@@ -287,20 +170,20 @@ export default function AutoForkConsole() {
         });
         if (res.ok) {
           setClaudestormConnected(true);
-          // Fetch sessions list
           const sessionsRes = await fetch(`${CLAUDESTORM_API}/api/autofork/sessions?limit=10`);
           if (sessionsRes.ok) {
             const data = await sessionsRes.json();
             setClaudestormSessions(data.sessions || []);
           }
+        } else {
+          setClaudestormConnected(false);
         }
       } catch {
         setClaudestormConnected(false);
       }
     };
     checkClaudestorm();
-    // Poll every 30s
-    const interval = setInterval(checkClaudestorm, 30000);
+    const interval = setInterval(checkClaudestorm, 10000);
     return () => clearInterval(interval);
   }, [mounted]);
 
@@ -308,14 +191,11 @@ export default function AutoForkConsole() {
   const goldAnchors = anchors.filter((a) => a.isGold);
   const lastGoldAnchor = goldAnchors[0] || null;
 
-  // Auto-anchor from success events
-  const createAutoAnchor = useCallback(async (
-    sessionId: string,
-    events: SuccessEvent[],
-    shouldMarkGold: boolean
-  ) => {
+  // Create anchor from selected events - stages to pending queue for review
+  const stageAnchor = useCallback(async (sessionId: string, events: SuccessEvent[]) => {
+    if (!sessionId) return;
+
     try {
-      // Fetch full anchor data
       const [detailRes, anchorRes] = await Promise.all([
         fetch(`${CLAUDESTORM_API}/api/autofork/session/${sessionId}`),
         fetch(`${CLAUDESTORM_API}/api/autofork/session/${sessionId}/anchor`)
@@ -326,7 +206,6 @@ export default function AutoForkConsole() {
       const detail: ClaudestormSessionDetail = await detailRes.json();
       const anchorData: ClaudestormAnchorData = await anchorRes.json();
 
-      // Build summary with success events
       const summaryParts: string[] = [];
       if (anchorData.session_summary) {
         summaryParts.push(`TASK: ${anchorData.session_summary.slice(0, 200)}`);
@@ -335,180 +214,125 @@ export default function AutoForkConsole() {
       if (anchorData.files_touched.length > 0) {
         summaryParts.push(`FILES: ${anchorData.files_touched.join(", ")}`);
       }
-
-      // Add success events to summary
       const eventDescriptions = events.map(e => `${e.type}: ${e.details}`).slice(0, 3);
-      summaryParts.push(`SUCCESS EVENTS:\n${eventDescriptions.join("\n")}`);
+      summaryParts.push(`EVENTS:\n${eventDescriptions.join("\n")}`);
 
-      const summary = summaryParts.join("\n");
-
-      // Generate resume prompt
       const resumeParts: string[] = [];
       resumeParts.push(`## Current Task\n${anchorData.goal.slice(0, 500)}`);
       if (lastGoldAnchor) {
-        resumeParts.push(`## Last Stable Checkpoint (Gold Anchor)\n${lastGoldAnchor.summary}`);
+        resumeParts.push(`## Last Stable Checkpoint\n${lastGoldAnchor.summary}`);
       }
       if (anchorData.files_touched.length > 0) {
-        resumeParts.push(`## Files in Progress\n${anchorData.files_touched.map(f => `- ${f}`).join("\n")}`);
+        resumeParts.push(`## Files\n${anchorData.files_touched.map(f => `- ${f}`).join("\n")}`);
       }
-      resumeParts.push(`## Success Events\n${eventDescriptions.map((e, i) => `${i + 1}. ${e}`).join("\n")}`);
-      resumeParts.push(`## Recovery Rule\nIf you drift or get stuck, restate the goal anchor and continue from the last stable checkpoint.`);
-
-      const resumePrompt = resumeParts.join("\n\n");
+      resumeParts.push(`## Recovery Rule\nIf stuck, restate the goal and continue from last checkpoint.`);
 
       const newAnchor: Anchor = {
         id: generateId(),
         createdAt: new Date().toISOString(),
-        sessionId: currentSessionId,
+        sessionId: sessionId,
         tokenEstimate: detail.stats.total_tokens,
         status: "success",
-        summary,
-        resumePrompt,
-        isGold: shouldMarkGold,
+        summary: summaryParts.join("\n"),
+        resumePrompt: resumeParts.join("\n\n"),
+        isGold: false,
       };
 
-      setAnchors((prev) => [newAnchor, ...prev]);
-
-      // Log the auto-anchor event
-      const eventTypes = Array.from(new Set(events.map(e => e.type))).join(", ");
-      const newEvent: EventLogEntry = {
-        id: generateId(),
-        timestamp: new Date().toISOString(),
-        message: `AUTO_ANCHOR: ${eventTypes}${shouldMarkGold ? " [GOLD]" : ""} from session ${sessionId.slice(0, 8)}`,
-      };
-      setEventLog((prev) => [newEvent, ...prev]);
-
-      // Show notification
-      setNotification(`Auto-anchor created: ${eventTypes}${shouldMarkGold ? " (marked gold)" : ""}`);
-      setTimeout(() => setNotification(null), 4000);
-
-      // Auto-push gold anchors to Weave
-      if (shouldMarkGold) {
-        fetch("/api/push-to-weave", { method: "POST" }).catch(() => {});
-      }
-
+      setPendingAnchors(prev => [newAnchor, ...prev]);
+      setNotification("Anchor staged for review");
+      setTimeout(() => setNotification(null), 2000);
     } catch (e) {
-      console.error("Failed to create auto-anchor:", e);
+      console.error("Failed to stage anchor:", e);
     }
-  }, [currentSessionId, lastGoldAnchor]);
+  }, [lastGoldAnchor]);
 
-  // Poll for success events when a session is selected
-  useEffect(() => {
-    if (!mounted || !claudestormConnected || !selectedSessionId || !autoAnchorEnabled) return;
+  // Approve pending anchor - moves to anchors and pushes to Weave
+  const approveAnchor = useCallback(async (anchorId: string, markGold: boolean) => {
+    const anchor = pendingAnchors.find(a => a.id === anchorId);
+    if (!anchor) return;
 
-    const checkSuccessEvents = async () => {
-      try {
-        // Use local API route (tries claudestorm first, falls back to local detection)
-        const url = lastEventTimestamp
-          ? `/api/success-events/${selectedSessionId}?since_timestamp=${encodeURIComponent(lastEventTimestamp)}`
-          : `/api/success-events/${selectedSessionId}`;
+    const approvedAnchor = { ...anchor, isGold: markGold };
+    setAnchors(prev => [approvedAnchor, ...prev]);
+    setPendingAnchors(prev => prev.filter(a => a.id !== anchorId));
 
-        const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-        if (!res.ok) return;
-
-        const data: SuccessEventsResponse = await res.json();
-        setRecentSuccessEvents(data.events);
-
-        // Only trigger if we have new events and should auto-anchor
-        if (data.events.length > 0 && data.should_auto_anchor) {
-          // Update last event timestamp to newest
-          const newestTimestamp = data.events[0].timestamp;
-          if (!lastEventTimestamp || newestTimestamp > lastEventTimestamp) {
-            setLastEventTimestamp(newestTimestamp);
-            // Create auto-anchor
-            await createAutoAnchor(selectedSessionId, data.events, data.should_mark_gold);
-          }
-        }
-      } catch {
-        // Silently fail - will retry on next poll
-      }
-    };
-
-    // Initial check
-    checkSuccessEvents();
-    // Poll every 15 seconds
-    const interval = setInterval(checkSuccessEvents, 15000);
-    return () => clearInterval(interval);
-  }, [mounted, claudestormConnected, selectedSessionId, autoAnchorEnabled, lastEventTimestamp, createAutoAnchor]);
-
-  const handleUpdate = useCallback(() => {
-    if (!transcript.trim()) return;
-
-    const tokenEstimate = Math.ceil(transcript.length / 4);
-    const successSignal = checkSuccessSignal(transcript);
-    const driftSignal = checkDriftSignal(transcript);
-    const shouldFork = successSignal || tokenEstimate > forkThreshold || driftSignal;
-
-    let status: Anchor["status"] = "stable";
-    if (successSignal) status = "success";
-    else if (driftSignal) status = "drifting";
-
-    const extracted = extractAnchorSummary(transcript);
-
-    let newSessionId = currentSessionId;
-    let newEventLog = eventLog;
-
-    if (shouldFork) {
-      newSessionId = generateId();
-      const reason = successSignal
-        ? "success_signal"
-        : tokenEstimate > forkThreshold
-        ? `token_limit_exceeded (>${forkThreshold.toLocaleString()})`
-        : "drift_detected";
-
-      const newEvent: EventLogEntry = {
+    // Push to Weave
+    try {
+      await fetch("/api/push-to-weave", { method: "POST" });
+      setNotification(`Pushed to Weave${markGold ? " (Gold)" : ""}`);
+      setEventLog(prev => [{
         id: generateId(),
         timestamp: new Date().toISOString(),
-        message: `FORKED: reason=${reason}, newSessionId=${newSessionId.slice(0, 8)}`,
-      };
-      newEventLog = [newEvent, ...eventLog];
-      setEventLog(newEventLog);
-      setCurrentSessionId(newSessionId);
+        message: `WEAVE_PUSH: ${anchor.summary.split("\n")[0].slice(0, 50)}...${markGold ? " [GOLD]" : ""}`,
+      }, ...prev]);
+    } catch {
+      setNotification("Push failed");
     }
+    setTimeout(() => setNotification(null), 3000);
+  }, [pendingAnchors]);
 
-    const resumePrompt = generateResumePrompt(extracted, lastGoldAnchor);
+  // Reject pending anchor
+  const rejectAnchor = useCallback((anchorId: string) => {
+    setPendingAnchors(prev => prev.filter(a => a.id !== anchorId));
+    setNotification("Anchor discarded");
+    setTimeout(() => setNotification(null), 2000);
+  }, []);
 
-    const newAnchor: Anchor = {
-      id: generateId(),
-      createdAt: new Date().toISOString(),
-      sessionId: newSessionId,
-      tokenEstimate,
-      status,
-      summary: extracted.summary,
-      resumePrompt,
-      isGold: false,
+  // Poll ALL sessions for success events - master ticker
+  useEffect(() => {
+    if (!mounted || !claudestormConnected || claudestormSessions.length === 0) return;
+
+    const checkAllSessions = async () => {
+      const newEvents: SuccessEvent[] = [];
+
+      for (const session of claudestormSessions.slice(0, 5)) { // Check top 5 active sessions
+        try {
+          const lastTs = sessionTimestampsRef.current[session.session_id];
+          const url = lastTs
+            ? `/api/success-events/${session.session_id}?since_timestamp=${encodeURIComponent(lastTs)}`
+            : `/api/success-events/${session.session_id}`;
+
+          const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+          if (!res.ok) continue;
+
+          const data: SuccessEventsResponse = await res.json();
+
+          if (data.events.length > 0) {
+            // Create human-readable session label from summary
+            const label = session.summary
+              ? session.summary.slice(0, 30).replace(/[#\n]/g, '').trim() + '...'
+              : session.session_id.slice(0, 8);
+
+            const eventsWithSession = data.events.map(e => ({
+              ...e,
+              sessionId: session.session_id,
+              sessionLabel: label,
+            }));
+            newEvents.push(...eventsWithSession);
+            sessionTimestampsRef.current[session.session_id] = data.events[0].timestamp;
+          }
+        } catch {
+          // Skip this session, try others
+        }
+      }
+
+      if (newEvents.length > 0) {
+        setEventTicker(prev => {
+          // Dedupe by content (details), not just timestamp - same commit shouldn't show twice
+          const existingDetails = new Set(prev.map(e => `${e.type}-${e.details}`));
+          const uniqueNew = newEvents.filter(e => !existingDetails.has(`${e.type}-${e.details}`));
+          if (uniqueNew.length === 0) return prev;
+          return [...uniqueNew, ...prev].slice(0, 50); // Keep last 50
+        });
+      }
     };
 
-    setAnchors((prev) => [newAnchor, ...prev]);
-    setTranscript("");
-  }, [transcript, currentSessionId, eventLog, lastGoldAnchor, forkThreshold]);
+    checkAllSessions();
+    const interval = setInterval(checkAllSessions, 15000);
+    return () => clearInterval(interval);
+  }, [mounted, claudestormConnected, claudestormSessions]);
 
-  const pushToWeave = useCallback(async () => {
-    if (pushingToWeave) return;
-    setPushingToWeave(true);
-    try {
-      const res = await fetch("/api/push-to-weave", { method: "POST" });
-      const data = await res.json();
-      if (data.success) {
-        setNotification("Pushed to Weave successfully");
-        const newEvent: EventLogEntry = {
-          id: generateId(),
-          timestamp: new Date().toISOString(),
-          message: "WEAVE_PUSH: anchors synced",
-        };
-        setEventLog((prev) => [newEvent, ...prev]);
-      } else {
-        setNotification("Weave push failed");
-      }
-    } catch {
-      setNotification("Weave push failed");
-    } finally {
-      setPushingToWeave(false);
-      setTimeout(() => setNotification(null), 3000);
-    }
-  }, [pushingToWeave]);
 
-  const handleMarkGold = useCallback(() => {
+  const handleMarkGold = useCallback(async () => {
     if (!latestAnchor || latestAnchor.isGold) return;
     setAnchors((prev) =>
       prev.map((a) => (a.id === latestAnchor.id ? { ...a, isGold: true } : a))
@@ -520,14 +344,19 @@ export default function AutoForkConsole() {
     };
     setEventLog((prev) => [newEvent, ...prev]);
     // Auto-push to Weave when gold is marked
-    pushToWeave();
-  }, [latestAnchor, pushToWeave]);
+    try {
+      await fetch("/api/push-to-weave", { method: "POST" });
+      setNotification("Pushed to Weave");
+      setTimeout(() => setNotification(null), 3000);
+    } catch {
+      // Silently fail
+    }
+  }, [latestAnchor]);
 
   const handleClearAll = useCallback(() => {
     setAnchors([]);
     setEventLog([]);
     setCurrentSessionId(generateId());
-    setTranscript("");
     localStorage.removeItem("autofork_anchors");
     localStorage.removeItem("autofork_events");
     localStorage.removeItem("autofork_sessionId");
@@ -544,160 +373,6 @@ export default function AutoForkConsole() {
     }
   }, [latestAnchor]);
 
-  const handleLoadTranscript = useCallback(async () => {
-    try {
-      const res = await fetch("/transcripts/spacecar_excerpt_80k.txt");
-      if (res.ok) {
-        const text = await res.text();
-        setTranscript(text);
-      }
-    } catch (e) {
-      console.error("Failed to load transcript:", e);
-    }
-  }, []);
-
-  const handleFetchFromClaudestorm = useCallback(async () => {
-    if (!selectedSessionId) return;
-    setLoadingApi(true);
-    try {
-      // Fetch session detail and anchor data in parallel
-      const [detailRes, anchorRes] = await Promise.all([
-        fetch(`${CLAUDESTORM_API}/api/autofork/session/${selectedSessionId}`),
-        fetch(`${CLAUDESTORM_API}/api/autofork/session/${selectedSessionId}/anchor`)
-      ]);
-
-      if (!detailRes.ok || !anchorRes.ok) {
-        throw new Error("Failed to fetch session data");
-      }
-
-      const detail: ClaudestormSessionDetail = await detailRes.json();
-      const anchorData: ClaudestormAnchorData = await anchorRes.json();
-
-      // Determine status from signals
-      let status: Anchor["status"] = "stable";
-      if (detail.success_signals.length > 0) status = "success";
-      else if (detail.drift_signals.length > 0) status = "drifting";
-
-      // Build summary from API data
-      const summaryParts: string[] = [];
-
-      // Current task (goal now reflects recent context)
-      summaryParts.push(`CURRENT TASK: ${anchorData.goal.slice(0, 300)}`);
-
-      // Files being worked on
-      if (anchorData.files_touched.length > 0) {
-        summaryParts.push(`FILES: ${anchorData.files_touched.join(", ")}`);
-      }
-
-      // Recent context
-      if (anchorData.recent_user_messages.length > 0) {
-        summaryParts.push(`RECENT USER: ${anchorData.recent_user_messages[0].slice(0, 150)}...`);
-      }
-
-      // Blockers
-      if (anchorData.blockers.length > 0) {
-        summaryParts.push(`BLOCKERS (${anchorData.blockers.length}): ${anchorData.blockers[0].slice(0, 150)}...`);
-      }
-
-      // Signals
-      if (detail.drift_signals.length > 0) {
-        summaryParts.push(`⚠ DRIFT: ${detail.drift_signals.join(", ")}`);
-      }
-      if (detail.success_signals.length > 0) {
-        summaryParts.push(`✓ SUCCESS: ${detail.success_signals.join(", ")}`);
-      }
-
-      const summary = summaryParts.join("\n");
-
-      // Generate resume prompt
-      const resumeParts: string[] = [];
-
-      // Goal/Task
-      if (anchorData.session_summary) {
-        resumeParts.push(`## Task\n${anchorData.session_summary}`);
-      }
-      resumeParts.push(`## Current Goal\n${anchorData.goal.slice(0, 500)}`);
-
-      // Gold anchor fallback
-      if (lastGoldAnchor) {
-        resumeParts.push(`## Last Stable Checkpoint (Gold Anchor)\n${lastGoldAnchor.summary}`);
-      }
-
-      // Current context
-      if (anchorData.files_touched.length > 0) {
-        resumeParts.push(`## Files in Progress\n${anchorData.files_touched.map(f => `- ${f}`).join("\n")}`);
-      }
-
-      // Recent activity
-      if (anchorData.recent_user_messages.length > 0) {
-        resumeParts.push(`## Recent Context\nLast user request: ${anchorData.recent_user_messages[0].slice(0, 200)}`);
-      }
-
-      // Blockers
-      if (anchorData.blockers.length > 0) {
-        resumeParts.push(`## Current Blockers\n${anchorData.blockers.slice(0, 3).map((b, i) => `${i + 1}. ${b.slice(0, 150)}`).join("\n")}`);
-      }
-
-      // Next steps based on context
-      const nextSteps = [];
-      if (anchorData.blockers.length > 0) {
-        nextSteps.push("Address the blockers listed above");
-      }
-      if (anchorData.files_touched.length > 0) {
-        nextSteps.push(`Continue work on ${anchorData.files_touched[0]}`);
-      }
-      nextSteps.push("Verify changes work as expected");
-      resumeParts.push(`## Next Steps\n${nextSteps.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
-
-      // Recovery rule
-      resumeParts.push(`## Recovery Rule\nIf you drift or get stuck, restate the goal anchor and continue from the last stable checkpoint.`);
-
-      const resumePrompt = resumeParts.join("\n\n");
-
-      // Check if should fork
-      const shouldFork = detail.should_fork || detail.stats.total_tokens > forkThreshold;
-      let newSessionId = currentSessionId;
-
-      if (shouldFork) {
-        newSessionId = generateId();
-        const reasons = [...detail.drift_signals, ...detail.success_signals];
-        if (detail.stats.total_tokens > forkThreshold) reasons.push("token_limit");
-        const newEvent: EventLogEntry = {
-          id: generateId(),
-          timestamp: new Date().toISOString(),
-          message: `FORKED (via API): reasons=[${reasons.join(", ")}], newSessionId=${newSessionId.slice(0, 8)}`,
-        };
-        setEventLog((prev) => [newEvent, ...prev]);
-        setCurrentSessionId(newSessionId);
-      }
-
-      const newAnchor: Anchor = {
-        id: generateId(),
-        createdAt: new Date().toISOString(),
-        sessionId: newSessionId,
-        tokenEstimate: detail.stats.total_tokens,
-        status,
-        summary,
-        resumePrompt,
-        isGold: false,
-      };
-
-      setAnchors((prev) => [newAnchor, ...prev]);
-
-      // Log the fetch
-      const fetchEvent: EventLogEntry = {
-        id: generateId(),
-        timestamp: new Date().toISOString(),
-        message: `FETCHED: claudestorm session ${selectedSessionId.slice(0, 8)}, ${detail.stats.total_tokens} tokens`,
-      };
-      setEventLog((prev) => [fetchEvent, ...prev]);
-
-    } catch (e) {
-      console.error("Failed to fetch from claudestorm:", e);
-    } finally {
-      setLoadingApi(false);
-    }
-  }, [selectedSessionId, currentSessionId, forkThreshold, lastGoldAnchor]);
 
   const getStatusColor = (status: Anchor["status"]) => {
     switch (status) {
@@ -754,28 +429,11 @@ export default function AutoForkConsole() {
             <span className={`w-2 h-2 rounded-full ${claudestormConnected ? "bg-emerald-500 animate-pulse" : "bg-zinc-600"}`} />
             <span className="text-xs text-zinc-400">{claudestormConnected ? "Claudestorm" : "Offline"}</span>
           </div>
-          <button
-            onClick={() => setAutoAnchorEnabled(!autoAnchorEnabled)}
-            className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border transition-all ${
-              autoAnchorEnabled
-                ? "bg-violet-900/50 border-violet-500/50 text-violet-300"
-                : "bg-zinc-900 border-zinc-800 text-zinc-500"
-            }`}
-          >
-            <span className={`w-2 h-2 rounded-full ${autoAnchorEnabled ? "bg-violet-400 animate-pulse" : "bg-zinc-600"}`} />
-            <span className="text-xs">Auto-Anchor</span>
-          </button>
-          <button
-            onClick={pushToWeave}
-            disabled={pushingToWeave}
-            className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border transition-all ${
-              pushingToWeave
-                ? "bg-orange-900/50 border-orange-500/50 text-orange-300"
-                : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-orange-300 hover:border-orange-500/50"
-            }`}
-          >
-            <span className="text-xs">{pushingToWeave ? "Pushing..." : "→ Weave"}</span>
-          </button>
+          {pendingAnchors.length > 0 && (
+            <span className="inline-flex items-center gap-2 px-3 py-1 bg-amber-900/50 border border-amber-500/50 rounded-full">
+              <span className="text-xs text-amber-300">{pendingAnchors.length} pending review</span>
+            </span>
+          )}
         </div>
       </header>
 
@@ -789,125 +447,157 @@ export default function AutoForkConsole() {
         </div>
       )}
 
-      {/* Main Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8 max-w-7xl mx-auto">
-        {/* Left: Transcript Input */}
-        <div className="bg-zinc-900/50 rounded-xl p-5 border border-zinc-800/50 backdrop-blur">
-          <h2 className="text-sm font-semibold mb-3 text-zinc-300 uppercase tracking-wide">
-            Transcript Input
-          </h2>
-          <textarea
-            value={transcript}
-            onChange={(e) => setTranscript(e.target.value)}
-            placeholder={`Paste your agent transcript here...\n\nExample content:\nGoal: Build a user dashboard\nStep 1: Create layout components\nStep 2: Add data fetching\nConstraint: Must use TypeScript\nError: Module not found`}
-            className="w-full h-56 md:h-64 bg-zinc-800/50 border border-zinc-700/50 rounded-lg p-4 text-zinc-100 placeholder-zinc-600 resize-none focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500/50 font-mono text-sm transition-all"
-          />
-          <div className="mt-4 flex flex-wrap gap-3">
-            <button
-              onClick={handleUpdate}
-              disabled={!transcript.trim()}
-              className="px-5 py-2.5 bg-sky-600 hover:bg-sky-500 disabled:bg-zinc-700 disabled:text-zinc-500 rounded-lg font-medium transition-all shadow-lg shadow-sky-500/20 disabled:shadow-none"
-            >
-              Parse Transcript
-            </button>
-            <button
-              onClick={handleClearAll}
-              className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg font-medium transition-all"
-            >
-              Clear All
-            </button>
-          </div>
-
-          {/* Claudestorm Integration - Primary */}
-          {claudestormConnected && claudestormSessions.length > 0 && (
-            <div className="mt-4 p-4 bg-emerald-950/30 rounded-lg border border-emerald-800/50">
-              <div className="flex justify-between items-center mb-2">
-                <div className="text-xs text-emerald-400 font-medium">LIVE SESSIONS</div>
-                {autoAnchorEnabled && selectedSessionId && (
-                  <div className="text-xs text-violet-400 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
-                    Watching for success
-                  </div>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <select
-                  value={selectedSessionId || ""}
-                  onChange={(e) => {
-                    setSelectedSessionId(e.target.value || null);
-                    setLastEventTimestamp(null); // Reset timestamp for new session
-                    setRecentSuccessEvents([]);
-                  }}
-                  className="flex-1 min-w-[200px] px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                >
-                  <option value="">Select a session...</option>
-                  {claudestormSessions.map((s) => (
-                    <option key={s.session_id} value={s.session_id}>
-                      {s.total_tokens.toLocaleString()} tok · {s.message_count} msgs · {s.session_id.slice(0, 8)}
-                    </option>
+      {/* Sessions Overview + Master Ticker */}
+      <div className="max-w-7xl mx-auto mb-6">
+        <div className={`rounded-xl p-5 border backdrop-blur ${
+          claudestormConnected
+            ? "bg-emerald-950/30 border-emerald-800/50"
+            : "bg-zinc-900/50 border-zinc-800/50"
+        }`}>
+          {claudestormConnected && claudestormSessions.length > 0 ? (
+            <>
+              {/* Active Sessions Row */}
+              <div className="flex flex-wrap items-center gap-3 mb-4">
+                <div className="flex items-center gap-2">
+                  <span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-sm font-medium text-emerald-300">Watching {claudestormSessions.length} sessions</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {claudestormSessions.slice(0, 4).map(s => (
+                    <span
+                      key={s.session_id}
+                      className="px-2 py-1 bg-zinc-800/70 rounded text-xs text-zinc-300"
+                      title={s.summary || s.session_id}
+                    >
+                      {s.summary ? s.summary.slice(0, 20).replace(/[#\n]/g, '').trim() + '...' : s.session_id.slice(0, 8)}
+                      <span className="text-zinc-500 ml-1">{s.total_tokens.toLocaleString()}t</span>
+                    </span>
                   ))}
-                </select>
-                <button
-                  onClick={handleFetchFromClaudestorm}
-                  disabled={!selectedSessionId || loadingApi}
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:text-zinc-500 rounded-lg text-sm font-medium transition-all shadow-lg shadow-emerald-500/20 disabled:shadow-none"
-                >
-                  {loadingApi ? "Fetching..." : "Create Anchor"}
-                </button>
+                </div>
               </div>
 
-              {/* Recent success events indicator */}
-              {recentSuccessEvents.length > 0 && (
-                <div className="mt-3 p-2 bg-emerald-900/30 rounded-lg border border-emerald-700/30">
-                  <div className="text-xs text-emerald-300 font-medium mb-1">Recent Success Events</div>
-                  <div className="flex flex-wrap gap-1">
-                    {recentSuccessEvents.slice(0, 5).map((event, i) => (
-                      <span
-                        key={i}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-800/50 rounded text-xs text-emerald-200"
-                        title={event.details}
+              {/* Stats Summary */}
+              <div className="flex flex-wrap gap-4 mb-4 text-sm">
+                <div className="text-emerald-300">
+                  <span className="font-mono font-bold">{eventTicker.filter(e => e.type === "git_commit").length}</span>
+                  <span className="text-emerald-400/70 ml-1">commits</span>
+                </div>
+                <div className="text-sky-300">
+                  <span className="font-mono font-bold">{eventTicker.filter(e => e.type === "tests_passed").length}</span>
+                  <span className="text-sky-400/70 ml-1">tests</span>
+                </div>
+                <div className="text-violet-300">
+                  <span className="font-mono font-bold">{eventTicker.filter(e => e.type === "deploy_success").length}</span>
+                  <span className="text-violet-400/70 ml-1">deploys</span>
+                </div>
+                <div className="text-amber-300">
+                  <span className="font-mono font-bold">{eventTicker.filter(e => e.type === "build_success").length}</span>
+                  <span className="text-amber-400/70 ml-1">builds</span>
+                </div>
+                <div className="text-pink-300">
+                  <span className="font-mono font-bold">{eventTicker.filter(e => e.type === "user_confirmation").length}</span>
+                  <span className="text-pink-400/70 ml-1">magic</span>
+                </div>
+              </div>
+
+              {/* Master Ticker */}
+              {eventTicker.length > 0 && (
+                <div className="border-t border-emerald-800/30 pt-4">
+                  <div className="text-xs text-zinc-500 mb-2">MASTER TICKER</div>
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    {eventTicker.slice(0, 20).map((event, i) => (
+                      <div
+                        key={`${event.sessionId}-${event.timestamp}-${i}`}
+                        className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs ${
+                          event.type === "git_commit" ? "bg-emerald-900/30 text-emerald-200" :
+                          event.type === "tests_passed" ? "bg-sky-900/30 text-sky-200" :
+                          event.type === "deploy_success" ? "bg-violet-900/30 text-violet-200" :
+                          event.type === "build_success" ? "bg-amber-900/30 text-amber-200" :
+                          event.type === "user_confirmation" ? "bg-pink-900/30 text-pink-200" :
+                          "bg-zinc-800/50 text-zinc-300"
+                        }`}
                       >
-                        {event.type === "git_commit" && "📝"}
-                        {event.type === "tests_passed" && "✓"}
-                        {event.type === "deploy_success" && "🚀"}
-                        {event.type === "user_confirmation" && "👍"}
-                        {event.type === "build_success" && "⚙️"}
-                        {event.type.replace(/_/g, " ")}
-                      </span>
+                        <span className="font-mono text-zinc-500 flex-shrink-0">
+                          {new Date(event.timestamp).toLocaleTimeString()}
+                        </span>
+                        <span className="px-1.5 py-0.5 bg-zinc-800/50 rounded text-zinc-400 flex-shrink-0">
+                          {event.sessionLabel || event.sessionId?.slice(0, 8)}
+                        </span>
+                        <span className="font-medium flex-shrink-0">{event.type.replace(/_/g, " ")}</span>
+                        <span className="text-zinc-400 truncate">{event.details.slice(0, 50)}</span>
+                      </div>
                     ))}
                   </div>
                 </div>
               )}
+            </>
+          ) : claudestormConnected ? (
+            <div className="flex items-center justify-center gap-2 py-4 text-zinc-400">
+              <span className="w-2 h-2 rounded-full bg-zinc-600" />
+              <span className="text-sm">No active sessions</span>
             </div>
-          )}
-
-          {/* Manual fallback */}
-          {!claudestormConnected && (
-            <div className="mt-4 p-3 bg-zinc-800/30 rounded-lg border border-zinc-700/30">
-              <p className="text-xs text-zinc-500 mb-2">Claudestorm offline — using manual mode</p>
-              <button
-                onClick={handleLoadTranscript}
-                className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 rounded-lg text-sm font-medium transition-all"
-              >
-                Load Sample Transcript
-              </button>
-            </div>
-          )}
-
-          {transcript && (
-            <div className="mt-3 text-xs text-zinc-500">
-              <span className={Math.ceil(transcript.length / 4) > forkThreshold ? "text-amber-400" : ""}>
-                ~{Math.ceil(transcript.length / 4).toLocaleString()}
-              </span>
-              <span className="text-zinc-600"> / {forkThreshold.toLocaleString()} tokens</span>
-              {Math.ceil(transcript.length / 4) > forkThreshold && (
-                <span className="text-amber-400 ml-2">→ will fork</span>
-              )}
+          ) : (
+            <div className="flex items-center justify-center gap-2 py-4 text-zinc-500">
+              <span className="w-2 h-2 rounded-full bg-zinc-600" />
+              <span className="text-sm">Claudestorm offline — start the API server to enable monitoring</span>
             </div>
           )}
         </div>
+      </div>
 
-        {/* Right: Latest Anchor Card */}
+      {/* Review Queue */}
+      {pendingAnchors.length > 0 && (
+        <div className="max-w-7xl mx-auto mb-6">
+          <div className="bg-amber-950/30 rounded-xl p-5 border border-amber-800/50 backdrop-blur">
+            <h2 className="text-sm font-semibold mb-4 text-amber-300 uppercase tracking-wide flex items-center gap-2">
+              Review Queue
+              <span className="px-2 py-0.5 bg-amber-800/50 rounded-full text-xs font-normal">
+                {pendingAnchors.length}
+              </span>
+            </h2>
+            <div className="space-y-3">
+              {pendingAnchors.map((anchor) => (
+                <div key={anchor.id} className="bg-zinc-900/50 rounded-lg p-4 border border-zinc-700/50">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs text-zinc-500 mb-1">
+                        {new Date(anchor.createdAt).toLocaleTimeString()} · {anchor.tokenEstimate.toLocaleString()} tokens
+                      </div>
+                      <pre className="text-sm text-zinc-200 whitespace-pre-wrap font-mono line-clamp-3">
+                        {anchor.summary}
+                      </pre>
+                    </div>
+                    <div className="flex gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => approveAnchor(anchor.id, false)}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium text-white transition-all"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => approveAnchor(anchor.id, true)}
+                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 rounded text-xs font-medium text-white transition-all"
+                      >
+                        Gold
+                      </button>
+                      <button
+                        onClick={() => rejectAnchor(anchor.id)}
+                        className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 rounded text-xs font-medium text-zinc-300 transition-all"
+                      >
+                        Discard
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Main Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8 max-w-7xl mx-auto">
+        {/* Left: Latest Anchor Card */}
         <div className="bg-zinc-900/50 rounded-xl p-5 border border-zinc-800/50 backdrop-blur">
           <h2 className="text-sm font-semibold mb-3 text-zinc-300 uppercase tracking-wide">
             Latest Anchor
@@ -934,7 +624,7 @@ export default function AutoForkConsole() {
               {/* Summary */}
               <div className="bg-zinc-800/50 rounded-lg p-4 border border-zinc-700/50">
                 <h3 className="text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wide">Summary</h3>
-                <pre className="text-sm text-zinc-200 whitespace-pre-wrap font-mono leading-relaxed">
+                <pre className="text-sm text-zinc-200 whitespace-pre-wrap font-mono leading-relaxed max-h-32 overflow-y-auto">
                   {latestAnchor.summary}
                 </pre>
               </div>
@@ -951,7 +641,7 @@ export default function AutoForkConsole() {
                         : "bg-zinc-700 hover:bg-zinc-600 text-zinc-200"
                     }`}
                   >
-                    {copied ? "Copied!" : "Copy Resume Prompt"}
+                    {copied ? "Copied!" : "Copy"}
                   </button>
                 </div>
                 <pre className="text-sm text-zinc-300 whitespace-pre-wrap font-mono max-h-36 overflow-y-auto leading-relaxed">
@@ -969,7 +659,7 @@ export default function AutoForkConsole() {
                     : "bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white shadow-lg shadow-amber-500/20"
                 }`}
               >
-                {latestAnchor.isGold ? "Already Marked as Gold" : "Mark Last Anchor Gold"}
+                {latestAnchor.isGold ? "Marked as Gold" : "Mark Gold"}
               </button>
             </div>
           ) : (
@@ -980,23 +670,30 @@ export default function AutoForkConsole() {
                 </svg>
               </div>
               <p className="text-zinc-500 text-sm">No anchors yet</p>
-              <p className="text-zinc-600 text-xs mt-1">Paste a transcript and click Update</p>
+              <p className="text-zinc-600 text-xs mt-1">Anchors created automatically on success</p>
             </div>
           )}
         </div>
-      </div>
 
-      {/* Bottom: Timeline & Event Log */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-7xl mx-auto">
-        {/* Anchor Timeline */}
+        {/* Right: Anchor Timeline */}
         <div className="bg-zinc-900/50 rounded-xl p-5 border border-zinc-800/50 backdrop-blur">
-          <h2 className="text-sm font-semibold mb-4 text-zinc-300 uppercase tracking-wide flex items-center gap-2">
-            Anchor Timeline
-            <span className="px-2 py-0.5 bg-zinc-800 rounded-full text-xs font-normal text-zinc-400">
-              {anchors.length}
-            </span>
-          </h2>
-          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-zinc-300 uppercase tracking-wide flex items-center gap-2">
+              Anchor Timeline
+              <span className="px-2 py-0.5 bg-zinc-800 rounded-full text-xs font-normal text-zinc-400">
+                {anchors.length}
+              </span>
+            </h2>
+            {anchors.length > 0 && (
+              <button
+                onClick={handleClearAll}
+                className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
             {anchors.length === 0 ? (
               <p className="text-zinc-600 text-sm text-center py-8">No anchors recorded</p>
             ) : (
@@ -1022,7 +719,7 @@ export default function AutoForkConsole() {
                         #{anchor.sessionId.slice(0, 6)}
                       </span>
                       {anchor.isGold && (
-                        <span className="text-amber-400 text-xs">★ gold</span>
+                        <span className="text-amber-400 text-xs">gold</span>
                       )}
                     </div>
                     <p className="text-sm text-zinc-300 line-clamp-2">
@@ -1034,8 +731,10 @@ export default function AutoForkConsole() {
             )}
           </div>
         </div>
+      </div>
 
-        {/* Event Log */}
+      {/* Bottom: Event Log */}
+      <div className="max-w-7xl mx-auto">
         <div className="bg-zinc-900/50 rounded-xl p-5 border border-zinc-800/50 backdrop-blur">
           <h2 className="text-sm font-semibold mb-4 text-zinc-300 uppercase tracking-wide flex items-center gap-2">
             Event Log
@@ -1043,14 +742,14 @@ export default function AutoForkConsole() {
               {eventLog.length}
             </span>
           </h2>
-          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+          <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
             {eventLog.length === 0 ? (
-              <p className="text-zinc-600 text-sm text-center py-8">No events recorded</p>
+              <p className="text-zinc-600 text-sm text-center py-4">No events recorded</p>
             ) : (
               eventLog.map((event) => (
                 <div
                   key={event.id}
-                  className="bg-zinc-800/50 rounded-lg p-3 text-sm border border-zinc-700/50 font-mono"
+                  className="bg-zinc-800/50 rounded-lg p-2.5 text-sm border border-zinc-700/50 font-mono"
                 >
                   <span className="text-zinc-500 mr-3">
                     {new Date(event.timestamp).toLocaleTimeString()}
@@ -1060,6 +759,8 @@ export default function AutoForkConsole() {
                       ? "text-violet-400"
                       : event.message.includes("GOLD")
                       ? "text-amber-400"
+                      : event.message.includes("AUTO_ANCHOR")
+                      ? "text-emerald-400"
                       : "text-zinc-300"
                   }`}>
                     {event.message}
@@ -1073,7 +774,7 @@ export default function AutoForkConsole() {
 
       {/* Footer */}
       <footer className="mt-8 text-center text-xs text-zinc-600">
-        AutoFork Console v1.0 — Agent memory persistence layer
+        AutoFork Console v2.0 — Agent memory persistence layer
       </footer>
     </div>
   );
