@@ -92,12 +92,32 @@ function generateId(): string {
   return Math.random().toString(36).substring(2, 11);
 }
 
+// Mock data for demo mode
+function getMockData() {
+  const now = Date.now();
+  return {
+    sessions: [
+      { session_id: "demo-1a2b3c", message_count: 47, total_tokens: 28400, last_timestamp: new Date(now).toISOString(), summary: "Building Caché hackathon UI" },
+      { session_id: "demo-4d5e6f", message_count: 23, total_tokens: 14200, last_timestamp: new Date(now - 300000).toISOString(), summary: "Weave API integration" },
+      { session_id: "demo-7g8h9i", message_count: 31, total_tokens: 19800, last_timestamp: new Date(now - 600000).toISOString(), summary: "Success event detection" },
+    ] as ClaudestormSession[],
+    events: [
+      { type: "git_commit" as const, timestamp: new Date(now).toISOString(), details: "[main a1b2c3d] Auto-push contributions feed", confidence: 0.95, sessionId: "demo-1a2b3c", sessionLabel: "Building Caché..." },
+      { type: "build_success" as const, timestamp: new Date(now - 60000).toISOString(), details: "Compiled successfully in 2.1s", confidence: 0.9, sessionId: "demo-1a2b3c", sessionLabel: "Building Caché..." },
+      { type: "user_confirmation" as const, timestamp: new Date(now - 120000).toISOString(), details: "magic - checkpoint confirmed", confidence: 1.0, sessionId: "demo-4d5e6f", sessionLabel: "Weave API..." },
+      { type: "git_commit" as const, timestamp: new Date(now - 180000).toISOString(), details: "[main 9f8e7d6] Mock data mode for demos", confidence: 0.95, sessionId: "demo-1a2b3c", sessionLabel: "Building Caché..." },
+      { type: "tests_passed" as const, timestamp: new Date(now - 240000).toISOString(), details: "12 tests passed in 3.4s", confidence: 0.92, sessionId: "demo-7g8h9i", sessionLabel: "Success event..." },
+      { type: "git_commit" as const, timestamp: new Date(now - 300000).toISOString(), details: "[main 5c4b3a2] Weave push endpoint", confidence: 0.95, sessionId: "demo-4d5e6f", sessionLabel: "Weave API..." },
+    ] as SuccessEvent[],
+  };
+}
 
 export default function AutoForkConsole() {
   const [anchors, setAnchors] = useState<Anchor[]>([]);
   const [eventLog, setEventLog] = useState<EventLogEntry[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState(() => generateId());
   const [mounted, setMounted] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
 
   // Claudestorm integration state
   const [claudestormConnected, setClaudestormConnected] = useState(false);
@@ -107,16 +127,25 @@ export default function AutoForkConsole() {
   // Event tracking state - master ticker across ALL sessions
   const [notification, setNotification] = useState<string | null>(null);
   const [eventTicker, setEventTicker] = useState<SuccessEvent[]>([]); // All events across all sessions (persisted)
-  const [pendingAnchors, setPendingAnchors] = useState<Anchor[]>([]); // Awaiting user review
+  const [contributions, setContributions] = useState<Anchor[]>([]); // Auto-pushed to Weave
 
   // Separate mount effect to ensure it always runs
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("demo") === "true") {
+      const mock = getMockData();
+      setDemoMode(true);
+      setClaudestormConnected(true);
+      setClaudestormSessions(mock.sessions);
+      setEventTicker(mock.events);
+    }
     setMounted(true);
   }, []);
 
-  // Load from localStorage after mount
+  // Load from localStorage after mount (skip in demo mode)
   useEffect(() => {
     if (!mounted) return;
+    if (new URLSearchParams(window.location.search).get("demo") === "true") return;
     try {
       const savedAnchors = localStorage.getItem("autofork_anchors");
       const savedEventLog = localStorage.getItem("autofork_events");
@@ -159,6 +188,7 @@ export default function AutoForkConsole() {
   // Check claudestorm connection and fetch all sessions
   useEffect(() => {
     if (!mounted) return;
+    if (new URLSearchParams(window.location.search).get("demo") === "true") return;
     const checkClaudestorm = async () => {
       try {
         const res = await fetch(`${CLAUDESTORM_API}/api/autofork/health`, {
@@ -186,9 +216,9 @@ export default function AutoForkConsole() {
 
   const lastGoldAnchor = anchors.filter((a) => a.isGold)[0] || null;
 
-  // Create anchor from selected events - stages to pending queue for review
-  const stageAnchor = useCallback(async (sessionId: string, events: SuccessEvent[]) => {
-    if (!sessionId) return;
+  // Auto-push contribution to Weave (no approval needed)
+  const pushContribution = useCallback(async (sessionId: string, events: SuccessEvent[]) => {
+    if (!sessionId || demoMode) return;
 
     try {
       const [detailRes, anchorRes] = await Promise.all([
@@ -212,16 +242,6 @@ export default function AutoForkConsole() {
       const eventDescriptions = events.map(e => `${e.type}: ${e.details}`).slice(0, 3);
       summaryParts.push(`EVENTS:\n${eventDescriptions.join("\n")}`);
 
-      const resumeParts: string[] = [];
-      resumeParts.push(`## Current Task\n${anchorData.goal.slice(0, 500)}`);
-      if (lastGoldAnchor) {
-        resumeParts.push(`## Last Stable Checkpoint\n${lastGoldAnchor.summary}`);
-      }
-      if (anchorData.files_touched.length > 0) {
-        resumeParts.push(`## Files\n${anchorData.files_touched.map(f => `- ${f}`).join("\n")}`);
-      }
-      resumeParts.push(`## Recovery Rule\nIf stuck, restate the goal and continue from last checkpoint.`);
-
       const newAnchor: Anchor = {
         id: generateId(),
         createdAt: new Date().toISOString(),
@@ -229,64 +249,46 @@ export default function AutoForkConsole() {
         tokenEstimate: detail.stats.total_tokens,
         status: "success",
         summary: summaryParts.join("\n"),
-        resumePrompt: resumeParts.join("\n\n"),
+        resumePrompt: "",
         isGold: false,
       };
 
-      setPendingAnchors(prev => [newAnchor, ...prev]);
-      setNotification("Anchor staged for review");
-      setTimeout(() => setNotification(null), 2000);
-    } catch (e) {
-      console.error("Failed to stage anchor:", e);
-    }
-  }, [lastGoldAnchor]);
-
-  // Approve pending anchor - moves to anchors and pushes to Weave
-  const approveAnchor = useCallback(async (anchorId: string, markGold: boolean) => {
-    const anchor = pendingAnchors.find(a => a.id === anchorId);
-    if (!anchor) return;
-
-    const approvedAnchor = { ...anchor, isGold: markGold };
-    setAnchors(prev => [approvedAnchor, ...prev]);
-    setPendingAnchors(prev => prev.filter(a => a.id !== anchorId));
-
-    // Push directly to Weave with anchor data
-    try {
+      // Auto-push to Weave
       const res = await fetch("/api/push-to-weave", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           anchor: {
-            input: anchor.resumePrompt,
-            output: anchor.summary,
-            success_type: anchor.status,
-            tokens: anchor.tokenEstimate,
-            is_gold: markGold,
-            session_id: anchor.sessionId,
+            input: anchorData.goal,
+            output: newAnchor.summary,
+            success_type: events[0]?.type || "success",
+            tokens: newAnchor.tokenEstimate,
+            is_gold: false,
+            session_id: sessionId,
           }
         })
       });
-      const data = await res.json();
-      if (data.success) {
-        setNotification(`Pushed to Weave${markGold ? " (Gold)" : ""}`);
+
+      if (res.ok) {
+        setContributions(prev => [newAnchor, ...prev].slice(0, 20));
+        setAnchors(prev => [newAnchor, ...prev]);
         setEventLog(prev => [{
           id: generateId(),
           timestamp: new Date().toISOString(),
-          message: `WEAVE_PUSH: ${anchor.summary.split("\n")[0].slice(0, 40)}...${markGold ? " [GOLD]" : ""}`,
+          message: `WEAVE_PUSH: ${events[0]?.type} - ${events[0]?.details.slice(0, 40)}`,
         }, ...prev]);
-      } else {
-        setNotification("Push failed: " + (data.error || "unknown"));
+        setNotification("🏆 Pushed to Weave");
+        setTimeout(() => setNotification(null), 2000);
       }
-    } catch {
-      setNotification("Push failed");
+    } catch (e) {
+      console.error("Failed to push:", e);
     }
-    setTimeout(() => setNotification(null), 3000);
-  }, [pendingAnchors]);
+  }, [demoMode]);
 
-  // Reject pending anchor
-  const rejectAnchor = useCallback((anchorId: string) => {
-    setPendingAnchors(prev => prev.filter(a => a.id !== anchorId));
-    setNotification("Anchor discarded");
+  // Undo a contribution (remove from list)
+  const undoContribution = useCallback((id: string) => {
+    setContributions(prev => prev.filter(c => c.id !== id));
+    setNotification("Contribution removed");
     setTimeout(() => setNotification(null), 2000);
   }, []);
 
@@ -357,19 +359,35 @@ export default function AutoForkConsole() {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-4 md:p-6 lg:p-8">
       {/* Header */}
-      <header className="mb-8 text-center">
+      <header className="mb-8 text-center relative">
+        <div className="absolute top-0 right-0">
+          {!demoMode ? (
+            <a href="?demo=true" className="text-xs px-3 py-1.5 bg-violet-900/50 hover:bg-violet-800/50 border border-violet-700/50 rounded-full text-violet-300 transition-colors">
+              Demo
+            </a>
+          ) : (
+            <a href="/" className="text-xs px-3 py-1.5 bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700/50 rounded-full text-zinc-400 transition-colors">
+              Exit demo
+            </a>
+          )}
+        </div>
         <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-pink-400 via-violet-400 to-sky-400 bg-clip-text text-transparent mb-2">
           Caché
         </h1>
         <p className="text-zinc-500 text-sm">Agent wins → Weave → Future agents query what worked</p>
         <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
+          {demoMode && (
+            <span className="inline-flex items-center gap-2 px-3 py-1 bg-violet-900/50 border border-violet-500/50 rounded-full">
+              <span className="text-xs text-violet-300">Demo Mode</span>
+            </span>
+          )}
           <div className="inline-flex items-center gap-2 px-3 py-1 bg-zinc-900 rounded-full border border-zinc-800">
             <span className={`w-2 h-2 rounded-full ${claudestormConnected ? "bg-emerald-500 animate-pulse" : "bg-zinc-600"}`} />
             <span className="text-xs text-zinc-400">{claudestormConnected ? "Connected" : "Offline"}</span>
           </div>
-          {pendingAnchors.length > 0 && (
+          {contributions.length > 0 && (
             <span className="inline-flex items-center gap-2 px-3 py-1 bg-amber-900/50 border border-amber-500/50 rounded-full">
-              <span className="text-xs text-amber-300">{pendingAnchors.length} pending review</span>
+              <span className="text-xs text-amber-300">🏆 {contributions.length} contributions</span>
             </span>
           )}
         </div>
@@ -483,49 +501,50 @@ export default function AutoForkConsole() {
         </div>
       </div>
 
+      {/* Org Cache Stats */}
+      <div className="max-w-7xl mx-auto mb-6">
+        <div className="bg-gradient-to-r from-violet-950/30 via-zinc-900/50 to-sky-950/30 rounded-xl p-5 border border-violet-800/30 backdrop-blur">
+          <h2 className="text-sm font-semibold mb-4 text-zinc-300 uppercase tracking-wide">Org Cache</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="text-center">
+              <div className="text-3xl font-bold text-violet-300">{anchors.length + (demoMode ? 47 : 0)}</div>
+              <div className="text-xs text-zinc-500">patterns stored</div>
+            </div>
+            <div className="text-center">
+              <div className="text-3xl font-bold text-emerald-300">{eventTicker.filter(e => e.type === "git_commit").length + (demoMode ? 34 : 0)}</div>
+              <div className="text-xs text-zinc-500">commits captured</div>
+            </div>
+            <div className="text-center">
+              <div className="text-3xl font-bold text-amber-300">{anchors.filter(a => a.isGold).length + (demoMode ? 12 : 0)}</div>
+              <div className="text-xs text-zinc-500">gold patterns</div>
+            </div>
+            <div className="text-center">
+              <div className="text-3xl font-bold text-sky-300">{demoMode ? "89%" : anchors.length > 0 ? "100%" : "—"}</div>
+              <div className="text-xs text-zinc-500">success rate</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Review Queue */}
-      {pendingAnchors.length > 0 && (
+      {/* Your Contributions */}
+      {contributions.length > 0 && (
         <div className="max-w-7xl mx-auto mb-6">
-          <div className="bg-amber-950/30 rounded-xl p-5 border border-amber-800/50 backdrop-blur">
-            <h2 className="text-sm font-semibold mb-4 text-amber-300 uppercase tracking-wide flex items-center gap-2">
-              Review Queue
+          <div className="bg-gradient-to-br from-amber-950/40 to-orange-950/30 rounded-xl p-5 border border-amber-700/50 backdrop-blur">
+            <h2 className="text-sm font-semibold mb-4 text-amber-200 uppercase tracking-wide flex items-center gap-2">
+              🏆 Your Contributions
               <span className="px-2 py-0.5 bg-amber-800/50 rounded-full text-xs font-normal">
-                {pendingAnchors.length}
+                {contributions.length} pushed
               </span>
             </h2>
-            <div className="space-y-3">
-              {pendingAnchors.map((anchor) => (
-                <div key={anchor.id} className="bg-zinc-900/50 rounded-lg p-4 border border-zinc-700/50">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs text-zinc-500 mb-1">
-                        {new Date(anchor.createdAt).toLocaleTimeString()} · {anchor.tokenEstimate.toLocaleString()} tokens
-                      </div>
-                      <pre className="text-sm text-zinc-200 whitespace-pre-wrap font-mono line-clamp-3">
-                        {anchor.summary}
-                      </pre>
-                    </div>
-                    <div className="flex gap-2 flex-shrink-0">
-                      <button
-                        onClick={() => approveAnchor(anchor.id, false)}
-                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium text-white transition-all"
-                      >
-                        Approve
-                      </button>
-                      <button
-                        onClick={() => approveAnchor(anchor.id, true)}
-                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 rounded text-xs font-medium text-white transition-all"
-                      >
-                        Gold
-                      </button>
-                      <button
-                        onClick={() => rejectAnchor(anchor.id)}
-                        className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 rounded text-xs font-medium text-zinc-300 transition-all"
-                      >
-                        Discard
-                      </button>
-                    </div>
+            <div className="space-y-2">
+              {contributions.slice(0, 5).map((c) => (
+                <div key={c.id} className="bg-zinc-900/50 rounded-lg p-3 border border-zinc-700/50 flex items-center justify-between">
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs text-zinc-500 mr-2">{new Date(c.createdAt).toLocaleTimeString()}</span>
+                    <span className="text-sm text-zinc-300 truncate">{c.summary.split("\n")[0]}</span>
                   </div>
+                  <button onClick={() => undoContribution(c.id)} className="text-xs text-zinc-500 hover:text-zinc-300 px-2">undo</button>
                 </div>
               ))}
             </div>
@@ -573,8 +592,24 @@ export default function AutoForkConsole() {
       </div>
 
       {/* Footer */}
-      <footer className="mt-8 text-center text-xs text-zinc-600">
-        Caché — Self-improving agents through cached successes
+      <footer className="mt-8 pt-6 border-t border-zinc-800/50">
+        <div className="max-w-2xl mx-auto text-center">
+          <p className="text-sm text-zinc-400 mb-3">Caché — Self-improving agents through cached successes</p>
+          <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-zinc-600">
+            <span className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
+              Claudestorm for detection
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-violet-600"></span>
+              Weave for storage
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-sky-600"></span>
+              MCP for retrieval
+            </span>
+          </div>
+        </div>
       </footer>
     </div>
   );
