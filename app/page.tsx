@@ -59,6 +59,23 @@ interface ClaudestormAnchorData {
   summary: string;
 }
 
+// Success event types
+interface SuccessEvent {
+  type: "git_commit" | "tests_passed" | "deploy_success" | "user_confirmation" | "build_success";
+  timestamp: string;
+  details: string;
+  confidence: number;
+}
+
+interface SuccessEventsResponse {
+  session_id: string;
+  events: SuccessEvent[];
+  event_count: number;
+  total_confidence: number;
+  should_auto_anchor: boolean;
+  should_mark_gold: boolean;
+}
+
 const CLAUDESTORM_API = "http://localhost:8100";
 
 function generateId(): string {
@@ -211,6 +228,12 @@ export default function AutoForkConsole() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [loadingApi, setLoadingApi] = useState(false);
 
+  // Auto-anchor state
+  const [autoAnchorEnabled, setAutoAnchorEnabled] = useState(true);
+  const [lastEventTimestamp, setLastEventTimestamp] = useState<string | null>(null);
+  const [notification, setNotification] = useState<string | null>(null);
+  const [recentSuccessEvents, setRecentSuccessEvents] = useState<SuccessEvent[]>([]);
+
   useEffect(() => {
     setMounted(true);
     try {
@@ -283,6 +306,123 @@ export default function AutoForkConsole() {
   const latestAnchor = anchors[0] || null;
   const goldAnchors = anchors.filter((a) => a.isGold);
   const lastGoldAnchor = goldAnchors[0] || null;
+
+  // Auto-anchor from success events
+  const createAutoAnchor = useCallback(async (
+    sessionId: string,
+    events: SuccessEvent[],
+    shouldMarkGold: boolean
+  ) => {
+    try {
+      // Fetch full anchor data
+      const [detailRes, anchorRes] = await Promise.all([
+        fetch(`${CLAUDESTORM_API}/api/autofork/session/${sessionId}`),
+        fetch(`${CLAUDESTORM_API}/api/autofork/session/${sessionId}/anchor`)
+      ]);
+
+      if (!detailRes.ok || !anchorRes.ok) return;
+
+      const detail: ClaudestormSessionDetail = await detailRes.json();
+      const anchorData: ClaudestormAnchorData = await anchorRes.json();
+
+      // Build summary with success events
+      const summaryParts: string[] = [];
+      if (anchorData.session_summary) {
+        summaryParts.push(`TASK: ${anchorData.session_summary.slice(0, 200)}`);
+      }
+      summaryParts.push(`GOAL: ${anchorData.goal.slice(0, 300)}`);
+      if (anchorData.files_touched.length > 0) {
+        summaryParts.push(`FILES: ${anchorData.files_touched.join(", ")}`);
+      }
+
+      // Add success events to summary
+      const eventDescriptions = events.map(e => `${e.type}: ${e.details}`).slice(0, 3);
+      summaryParts.push(`SUCCESS EVENTS:\n${eventDescriptions.join("\n")}`);
+
+      const summary = summaryParts.join("\n");
+
+      // Generate resume prompt
+      const resumeParts: string[] = [];
+      resumeParts.push(`## Current Task\n${anchorData.goal.slice(0, 500)}`);
+      if (lastGoldAnchor) {
+        resumeParts.push(`## Last Stable Checkpoint (Gold Anchor)\n${lastGoldAnchor.summary}`);
+      }
+      if (anchorData.files_touched.length > 0) {
+        resumeParts.push(`## Files in Progress\n${anchorData.files_touched.map(f => `- ${f}`).join("\n")}`);
+      }
+      resumeParts.push(`## Success Events\n${eventDescriptions.map((e, i) => `${i + 1}. ${e}`).join("\n")}`);
+      resumeParts.push(`## Recovery Rule\nIf you drift or get stuck, restate the goal anchor and continue from the last stable checkpoint.`);
+
+      const resumePrompt = resumeParts.join("\n\n");
+
+      const newAnchor: Anchor = {
+        id: generateId(),
+        createdAt: new Date().toISOString(),
+        sessionId: currentSessionId,
+        tokenEstimate: detail.stats.total_tokens,
+        status: "success",
+        summary,
+        resumePrompt,
+        isGold: shouldMarkGold,
+      };
+
+      setAnchors((prev) => [newAnchor, ...prev]);
+
+      // Log the auto-anchor event
+      const eventTypes = Array.from(new Set(events.map(e => e.type))).join(", ");
+      const newEvent: EventLogEntry = {
+        id: generateId(),
+        timestamp: new Date().toISOString(),
+        message: `AUTO_ANCHOR: ${eventTypes}${shouldMarkGold ? " [GOLD]" : ""} from session ${sessionId.slice(0, 8)}`,
+      };
+      setEventLog((prev) => [newEvent, ...prev]);
+
+      // Show notification
+      setNotification(`Auto-anchor created: ${eventTypes}${shouldMarkGold ? " (marked gold)" : ""}`);
+      setTimeout(() => setNotification(null), 4000);
+
+    } catch (e) {
+      console.error("Failed to create auto-anchor:", e);
+    }
+  }, [currentSessionId, lastGoldAnchor]);
+
+  // Poll for success events when a session is selected
+  useEffect(() => {
+    if (!mounted || !claudestormConnected || !selectedSessionId || !autoAnchorEnabled) return;
+
+    const checkSuccessEvents = async () => {
+      try {
+        const url = lastEventTimestamp
+          ? `${CLAUDESTORM_API}/api/autofork/session/${selectedSessionId}/success-events?since_timestamp=${encodeURIComponent(lastEventTimestamp)}`
+          : `${CLAUDESTORM_API}/api/autofork/session/${selectedSessionId}/success-events`;
+
+        const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+        if (!res.ok) return;
+
+        const data: SuccessEventsResponse = await res.json();
+        setRecentSuccessEvents(data.events);
+
+        // Only trigger if we have new events and should auto-anchor
+        if (data.events.length > 0 && data.should_auto_anchor) {
+          // Update last event timestamp to newest
+          const newestTimestamp = data.events[0].timestamp;
+          if (!lastEventTimestamp || newestTimestamp > lastEventTimestamp) {
+            setLastEventTimestamp(newestTimestamp);
+            // Create auto-anchor
+            await createAutoAnchor(selectedSessionId, data.events, data.should_mark_gold);
+          }
+        }
+      } catch {
+        // Silently fail - will retry on next poll
+      }
+    };
+
+    // Initial check
+    checkSuccessEvents();
+    // Poll every 15 seconds
+    const interval = setInterval(checkSuccessEvents, 15000);
+    return () => clearInterval(interval);
+  }, [mounted, claudestormConnected, selectedSessionId, autoAnchorEnabled, lastEventTimestamp, createAutoAnchor]);
 
   const handleUpdate = useCallback(() => {
     if (!transcript.trim()) return;
@@ -399,12 +539,6 @@ export default function AutoForkConsole() {
       const detail: ClaudestormSessionDetail = await detailRes.json();
       const anchorData: ClaudestormAnchorData = await anchorRes.json();
 
-      // DEBUG
-      console.log("=== CLAUDESTORM RESPONSE ===");
-      console.log("recent_user_messages:", anchorData.recent_user_messages);
-      console.log("files_touched:", anchorData.files_touched);
-      console.log("goal length:", anchorData.goal?.length);
-
       // Determine status from signals
       let status: Anchor["status"] = "stable";
       if (detail.success_signals.length > 0) status = "success";
@@ -413,11 +547,8 @@ export default function AutoForkConsole() {
       // Build summary from API data
       const summaryParts: string[] = [];
 
-      // Task/Goal
-      if (anchorData.session_summary) {
-        summaryParts.push(`TASK: ${anchorData.session_summary.slice(0, 200)}`);
-      }
-      summaryParts.push(`GOAL: ${anchorData.goal.slice(0, 300)}`);
+      // Current task (goal now reflects recent context)
+      summaryParts.push(`CURRENT TASK: ${anchorData.goal.slice(0, 300)}`);
 
       // Files being worked on
       if (anchorData.files_touched.length > 0) {
@@ -443,10 +574,6 @@ export default function AutoForkConsole() {
       }
 
       const summary = summaryParts.join("\n");
-
-      // DEBUG
-      console.log("=== BUILT SUMMARY ===");
-      console.log(summary);
 
       // Generate resume prompt
       const resumeParts: string[] = [];
@@ -521,16 +648,7 @@ export default function AutoForkConsole() {
         isGold: false,
       };
 
-      console.log("=== CREATING ANCHOR ===");
-      console.log("summary:", newAnchor.summary);
-      console.log("status:", newAnchor.status);
-
-      setAnchors((prev) => {
-        console.log("Previous anchors:", prev.length);
-        const updated = [newAnchor, ...prev];
-        console.log("New anchors:", updated.length);
-        return updated;
-      });
+      setAnchors((prev) => [newAnchor, ...prev]);
 
       // Log the fetch
       const fetchEvent: EventLogEntry = {
@@ -602,8 +720,29 @@ export default function AutoForkConsole() {
             <span className={`w-2 h-2 rounded-full ${claudestormConnected ? "bg-emerald-500 animate-pulse" : "bg-zinc-600"}`} />
             <span className="text-xs text-zinc-400">{claudestormConnected ? "Claudestorm" : "Offline"}</span>
           </div>
+          <button
+            onClick={() => setAutoAnchorEnabled(!autoAnchorEnabled)}
+            className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border transition-all ${
+              autoAnchorEnabled
+                ? "bg-violet-900/50 border-violet-500/50 text-violet-300"
+                : "bg-zinc-900 border-zinc-800 text-zinc-500"
+            }`}
+          >
+            <span className={`w-2 h-2 rounded-full ${autoAnchorEnabled ? "bg-violet-400 animate-pulse" : "bg-zinc-600"}`} />
+            <span className="text-xs">Auto-Anchor</span>
+          </button>
         </div>
       </header>
+
+      {/* Notification Toast */}
+      {notification && (
+        <div className="fixed top-4 right-4 z-50 animate-in">
+          <div className="bg-emerald-900/90 border border-emerald-500/50 text-emerald-100 px-4 py-3 rounded-lg shadow-lg backdrop-blur flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-sm font-medium">{notification}</span>
+          </div>
+        </div>
+      )}
 
       {/* Main Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8 max-w-7xl mx-auto">
@@ -637,11 +776,23 @@ export default function AutoForkConsole() {
           {/* Claudestorm Integration - Primary */}
           {claudestormConnected && claudestormSessions.length > 0 && (
             <div className="mt-4 p-4 bg-emerald-950/30 rounded-lg border border-emerald-800/50">
-              <div className="text-xs text-emerald-400 font-medium mb-2">LIVE SESSIONS</div>
+              <div className="flex justify-between items-center mb-2">
+                <div className="text-xs text-emerald-400 font-medium">LIVE SESSIONS</div>
+                {autoAnchorEnabled && selectedSessionId && (
+                  <div className="text-xs text-violet-400 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
+                    Watching for success
+                  </div>
+                )}
+              </div>
               <div className="flex flex-wrap gap-2">
                 <select
                   value={selectedSessionId || ""}
-                  onChange={(e) => setSelectedSessionId(e.target.value || null)}
+                  onChange={(e) => {
+                    setSelectedSessionId(e.target.value || null);
+                    setLastEventTimestamp(null); // Reset timestamp for new session
+                    setRecentSuccessEvents([]);
+                  }}
                   className="flex-1 min-w-[200px] px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 >
                   <option value="">Select a session...</option>
@@ -659,6 +810,29 @@ export default function AutoForkConsole() {
                   {loadingApi ? "Fetching..." : "Create Anchor"}
                 </button>
               </div>
+
+              {/* Recent success events indicator */}
+              {recentSuccessEvents.length > 0 && (
+                <div className="mt-3 p-2 bg-emerald-900/30 rounded-lg border border-emerald-700/30">
+                  <div className="text-xs text-emerald-300 font-medium mb-1">Recent Success Events</div>
+                  <div className="flex flex-wrap gap-1">
+                    {recentSuccessEvents.slice(0, 5).map((event, i) => (
+                      <span
+                        key={i}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-800/50 rounded text-xs text-emerald-200"
+                        title={event.details}
+                      >
+                        {event.type === "git_commit" && "📝"}
+                        {event.type === "tests_passed" && "✓"}
+                        {event.type === "deploy_success" && "🚀"}
+                        {event.type === "user_confirmation" && "👍"}
+                        {event.type === "build_success" && "⚙️"}
+                        {event.type.replace(/_/g, " ")}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

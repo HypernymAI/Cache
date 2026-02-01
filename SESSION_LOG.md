@@ -46,12 +46,114 @@ The goal: Agents that get better over time by learning from their own successes.
 
 ---
 
+## Session 2 Summary (2026-01-31)
+
+### What We Built: Success Capture (Auto-Anchoring)
+
+**Claudestorm API - Success Events Endpoint** (`autofork_api.py`)
+- `GET /api/autofork/session/{id}/success-events` - Detects success events
+- Detection types:
+  - `git_commit` — Successful git commits via Bash tool
+  - `tests_passed` — Test suite completions (pytest, jest patterns)
+  - `deploy_success` — Deployment completions (vercel, netlify, URLs)
+  - `user_confirmation` — User saying done/thanks/perfect
+  - `build_success` — Build completions
+- Returns confidence scores and auto-anchor recommendations
+- Supports `since_timestamp` parameter for polling only new events
+
+**Frontend - Auto-Anchor System** (`page.tsx`)
+- Auto-anchor toggle in header (enabled by default)
+- Polls success-events endpoint every 15 seconds when session selected
+- Automatically creates anchors when success events detected
+- Auto-marks as "gold" when strong signals (deploy, multiple events)
+- Toast notifications for auto-created anchors
+- Success events indicator showing recent detected events
+- Reset timestamp on session change to avoid duplicate anchors
+
+**Cleaned Up**
+- Removed debug console.log statements
+- Added CSS animations for notifications
+
+### The Learning Loop Progress
+```
+[x] Session succeeds → Capture what worked (SUCCESS CAPTURE - DONE)
+[ ] Compress to pattern (Nick working on Neptune inference separately)
+[ ] Store in cache (NEXT: Behavior cache)
+[ ] Feed to future sessions (NEXT: Feedback injection)
+```
+
+---
+
+## Weave Integration Plan
+
+### Data Flow Architecture
+```
+User request → [+ compressed patterns injected] → Agent → Output
+                         ↑                              ↓
+                    AutoFork                      Weave observes
+                    (pattern cache)              (input + output)
+```
+
+**Key principle**: Weave sees the **augmented input** (user request + injected patterns) and **output**, not the compression internals.
+
+### Anchor Schema for Weave Export
+
+```typescript
+{
+  // What Weave sees (public)
+  input: string,           // User request + injected patterns (resume prompt)
+  output: string,          // What agent produced (success summary)
+
+  // Metadata for filtering
+  success_type: string,    // "deploy", "tests_passed", "commit", "user_confirmation"
+  project_context: string, // Project name or type
+  timestamp: string,       // ISO timestamp
+  tokens: number,          // Token count at anchor
+  is_gold: boolean,        // Whether marked as stable checkpoint
+
+  // Internal (NOT exposed to Weave)
+  compression_id?: string  // Reference to Neptune compression, if available
+}
+```
+
+### API Endpoint (To Build)
+```
+GET /api/autofork/anchors/export
+```
+
+Returns array of anchors in Weave-friendly format. Filters out compression internals.
+
+Query params:
+- `since`: ISO timestamp to get only new anchors
+- `gold_only`: Boolean to filter to gold anchors only
+- `success_type`: Filter by success type
+
+### Integration Points
+
+1. **AutoFork Console** creates anchors with success events
+2. **Neptune** (separately) compresses successful patterns
+3. **Export endpoint** provides Weave-friendly format
+4. **Weave** pulls input/output pairs for observability
+5. **Feedback injection** (future) injects compressed patterns into new session inputs
+
+### What Weave DOES see:
+- Augmented inputs (user request + any injected patterns)
+- Agent outputs (success summaries, files changed)
+- Success metadata (type, timestamp, project)
+
+### What Weave DOES NOT see:
+- Raw compression process
+- Neptune internals
+- Hypernym representations
+
+---
+
 ## Next Steps
 
 ### Small (Quick Wins)
+- [x] Remove debug console.log statements
 - [ ] Clean up blocker detection — filter out console output, JSON, etc.
 - [ ] Better labeling in UI — distinguish "Original Task" vs "Recent Activity"
-- [ ] Remove debug console.log statements
 - [ ] Commit claudestorm changes and push `autofork-integration` branch
 - [ ] Add loading/error states for API failures
 - [ ] Truncate long text more gracefully in UI
@@ -176,6 +278,20 @@ Returns:
 - `files_touched`: Recently edited files
 - `blockers`: Recent error messages
 - `recent_tools`: Tool usage counts
+
+### GET /api/autofork/session/{id}/success-events
+Query params: `since_timestamp` (optional, for polling new events only)
+
+Returns:
+- `events`: List of detected success events, each with:
+  - `type`: "git_commit" | "tests_passed" | "deploy_success" | "user_confirmation" | "build_success"
+  - `timestamp`: When the event occurred
+  - `details`: Description/extracted info
+  - `confidence`: 0-1 score
+- `event_count`: Total events
+- `total_confidence`: Sum of confidence scores
+- `should_auto_anchor`: Boolean, true if signals are strong enough
+- `should_mark_gold`: Boolean, true for very strong signals (deploy, multiple events)
 
 ---
 
