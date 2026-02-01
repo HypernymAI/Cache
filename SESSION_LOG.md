@@ -16,6 +16,71 @@
 ## Resume Prompt (Start Here)
 
 ```
+#magic #venus Continue work on Caché.
+
+## What This Is
+Hackathon project: Self-improving agents through cached successes.
+Flow: Agent wins → Caché detects → Auto-push to Weave → Future agents query what worked
+
+## Current State (Session 5 complete)
+- Frontend: Next.js at localhost:3000
+- Backend: Claudestorm API at localhost:8100
+- Storage: Weave (W&B) - WORKING, pushes confirmed
+
+## What Works
+✅ Demo mode (?demo=true) with mock data for judges
+✅ Real-time session monitoring (watches all Claudestorm sessions)
+✅ Master ticker showing commits/tests/deploys/builds/magic
+✅ Auto-push to Weave on magic keywords + git commits
+✅ Weave History panel pulling REAL data from Weave API
+✅ Org Cache stats (patterns/commits/magic/gold/tokens)
+✅ Contributions trophy case with gold ⭐ and undo
+✅ "Powered by" footer (Claudestorm/Weave/MCP)
+
+## Known Issues / Polish Needed
+- Event detection could be tighter (false positives)
+- No visualization of the "loop" (agent querying cache)
+- Demo mode could have more impressive fake data
+- UI could be flashier for hackathon presentation
+
+## Run Commands
+Terminal 1: cd ~/Desktop/source/claudestorm && CLAUDESTORM_DB_DIR=. .venv/bin/python -m uvicorn core.autofork_api:app --port 8100
+Terminal 2: cd ~/Desktop/source/hackathon_site && npm run dev
+
+## Key Files
+- app/page.tsx - Main UI
+- app/api/push-to-weave/route.ts - Push patterns to Weave
+- app/api/weave-history/route.ts - Fetch history from Weave
+- app/api/success-events/[sessionId]/route.ts - Detect success events
+```
+
+---
+
+## Session 5 Summary (2026-02-01 ~3-4AM)
+
+### Fixed Critical Bug
+- Python boolean `false` vs `False` was breaking ALL Weave pushes for 12+ hours
+- Now auto-push works on magic keywords and git commits
+
+### Added
+- `/api/weave-history` endpoint - fetches real data from Weave API
+- Weave History panel in UI showing actual pushed patterns
+- Auto-push deduplication (pushedEventsRef) to prevent spam
+- Sorted Weave history newest-first
+- Filter mock demo data from localStorage in real mode
+
+### Files Changed
+```
+app/page.tsx - Auto-push logic, Weave history display, deduplication
+app/api/push-to-weave/route.ts - Fixed Python boolean
+app/api/weave-history/route.ts - NEW: Fetch from Weave
+```
+
+---
+
+## Previous: Session 4 Summary
+
+```
 #magic Continue work on Caché (renamed from AutoFork Console).
 
 ## What This Is
