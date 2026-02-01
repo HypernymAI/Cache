@@ -1,4 +1,4 @@
-# AutoFork Console - Project History
+# Caché - Project History
 
 ## Why We're Building This
 
@@ -9,11 +9,134 @@
 
 **The pitch**: Cache what works. Surface it later. Agents get better over time.
 
-**Claudestorm** does the heavy lifting (tracking, compression). **AutoFork** is the showcase UI that demonstrates the value of org-wide pattern caching.
+**Claudestorm** does the heavy lifting (tracking, compression). **Caché** is the showcase UI that demonstrates the value of org-wide pattern caching.
 
 ---
 
 ## Resume Prompt (Start Here)
+
+```
+#magic #venus Continue work on Caché.
+
+## What This Is
+Hackathon project: Self-improving agents through cached successes.
+Flow: Agent wins → Caché detects → Auto-push to Weave → Future agents query what worked
+
+## Current State (Session 6 complete)
+- Frontend: Next.js at localhost:3000 (judge-ready!)
+- Backend: Claudestorm API at localhost:8100
+- Storage: Weave (W&B) - WORKING, pushes confirmed
+
+## What Works
+✅ Demo mode (?demo=true) - ENHANCED for judges
+✅ Visual "How It Works" loop diagram with animated arrows
+✅ MCP Query demo showing what agents retrieve
+✅ Live event animation in demo mode (events appear dynamically)
+✅ Real-time session monitoring (watches all Claudestorm sessions)
+✅ Master ticker showing commits/tests/deploys/builds/magic
+✅ Auto-push to Weave on magic keywords + git commits
+✅ Weave History panel pulling REAL data from Weave API
+✅ Org Cache stats (patterns/commits/magic/gold/tokens)
+✅ Contributions trophy case with gold ⭐ and undo
+✅ Enhanced footer with tech badges
+✅ README.md for judges
+
+## For Judges
+Open http://localhost:3000?demo=true to see:
+1. The self-improving loop visualization (top)
+2. Live events appearing in the ticker
+3. MCP Query demo showing agent retrieval
+4. Org cache statistics
+
+## Run Commands
+Terminal 1: cd ~/Desktop/source/claudestorm && CLAUDESTORM_DB_DIR=. .venv/bin/python -m uvicorn core.autofork_api:app --port 8100
+Terminal 2: cd ~/Desktop/source/hackathon_site && npm run dev
+
+## Key Files
+- app/page.tsx - Main UI
+- app/api/push-to-weave/route.ts - Push patterns to Weave
+- app/api/weave-history/route.ts - Fetch history from Weave
+- app/api/success-events/[sessionId]/route.ts - Detect success events
+- README.md - Quick start for judges
+```
+
+---
+
+## Session 6 Summary (2026-02-01 morning)
+
+### Focus: Judge-Friendly Demo Mode
+
+Since Claudestorm won't be shared, made demo mode the star of the show.
+
+### Added
+
+**Visual Loop Diagram**
+- 5-step animated flow: Agent Works → Caché Detects → Push to Weave → Agents Query → Better Results
+- Colored arrows with staggered pulse animations
+- Loop-back arrow showing the cycle
+
+**MCP Query Demo Section**
+- Shows 3 sample queries ("How to deploy Next.js?", "Fix OAuth token refresh", etc.)
+- Displays pattern results with type badges and usage counts
+- Explains what agents actually retrieve from the cache
+
+**Live Demo Animation**
+- Events now appear dynamically in demo mode (4-7 second intervals)
+- Toast notifications when new events detected
+- Creates sense of "live" activity for judges
+
+**Enhanced Header**
+- Bigger, bolder title
+- Improved tagline: "Agents that learn from wins"
+
+**Enhanced Footer**
+- Styled integration badges (Claudestorm, W&B Weave, MCP)
+- Tech stack pills (Next.js, TypeScript, Tailwind, Python)
+- Demo mode notice
+
+**README.md**
+- Quick start guide for judges
+- Architecture diagram
+- Feature list and file structure
+
+**CSS Animations**
+- Arrow flow animation for loop diagram
+- Highlight animation for new events
+- Glow pulse for active elements
+
+### Files Changed
+```
+app/page.tsx           - Loop diagram, MCP demo, live animations, enhanced UI
+app/globals.css        - New animations (arrow-flow, highlight-new, glow-pulse)
+README.md              - NEW: Quick start for judges
+SESSION_LOG.md         - This update
+```
+
+---
+
+## Session 5 Summary (2026-02-01 ~3-4AM)
+
+### Fixed Critical Bug
+- Python boolean `false` vs `False` was breaking ALL Weave pushes for 12+ hours
+- Now auto-push works on magic keywords and git commits
+
+### Added
+- `/api/weave-history` endpoint - fetches real data from Weave API
+- Weave History panel in UI showing actual pushed patterns
+- Auto-push deduplication (pushedEventsRef) to prevent spam
+- Sorted Weave history newest-first
+- Filter mock demo data from localStorage in real mode
+
+### Files Changed
+```
+app/page.tsx - Auto-push logic, Weave history display, deduplication
+app/api/push-to-weave/route.ts - Fixed Python boolean
+app/api/weave-history/route.ts - NEW: Fetch from Weave
+```
+
+---
+
+## Previous: Session 4 Summary
 
 ```
 #magic Continue work on Caché (renamed from AutoFork Console).

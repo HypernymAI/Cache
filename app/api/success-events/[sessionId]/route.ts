@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 const CLAUDESTORM_API = "http://localhost:8100";
 
 interface SuccessEvent {
-  type: "git_commit" | "tests_passed" | "deploy_success" | "user_confirmation" | "build_success";
+  type: "git_commit" | "tests_passed" | "deploy_success" | "user_confirmation" | "build_success" | "session_start" | "checkpoint" | "issue";
   timestamp: string;
   details: string;
   confidence: number;
@@ -27,10 +27,20 @@ const PATTERNS = {
     output: /https:\/\/[\w-]+\.(vercel\.app|netlify\.app|railway\.app)/i,
     confidence: 0.95,
   },
-  user_anchor: {
-    // Explicit "magic" trigger - user deliberately marking a checkpoint
-    input: /#?magic/i,
+  session_start: {
+    // #magic at start = new session/context
+    input: /^#magic/i,
+    confidence: 0.9,
+  },
+  checkpoint: {
+    // "magic" anywhere = checkpoint (word boundary to avoid "magical" etc)
+    input: /\bmagic\b/i,
     confidence: 0.8,
+  },
+  issue: {
+    // Negative signals - something went wrong
+    input: /^(bad|stuck|broken|failed|ugh|damn|shit|fuck|this is wrong|not working)/i,
+    confidence: 0.7,
   },
   build_success: {
     // Require specific build success messages with timing
@@ -40,25 +50,69 @@ const PATTERNS = {
   },
 };
 
+// Simple hash for stable event IDs
+function hashString(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return Math.abs(hash).toString(36);
+}
+
 function detectSuccessEvents(
   recentUserMessages: string[],
   recentAssistantMessages: string[],
   toolResults: string[]
 ): SuccessEvent[] {
   const events: SuccessEvent[] = [];
+  const seenHashes = new Set<string>();
   const now = new Date().toISOString();
 
-  // Check for explicit "magic" trigger
+  // Check for magic triggers and issues
+  // Use message index for uniqueness so each occurrence in recent messages is separate
+  let msgIndex = 0;
   for (const msg of recentUserMessages) {
-    if (PATTERNS.user_anchor.input?.test(msg)) {
-      events.push({
-        type: "user_confirmation",
-        timestamp: now,
-        details: "magic checkpoint",
-        confidence: PATTERNS.user_anchor.confidence,
-      });
-      break;
+    const msgId = `${msgIndex}-${hashString(msg)}`; // Index + hash for uniqueness within this request
+
+    // Session start: #magic at beginning
+    if (PATTERNS.session_start.input?.test(msg)) {
+      if (!seenHashes.has(msgId)) {
+        seenHashes.add(msgId);
+        events.push({
+          type: "session_start",
+          timestamp: now,
+          details: `${msg.slice(0, 50).replace(/[#\n]/g, '').trim()}`,
+          confidence: PATTERNS.session_start.confidence,
+        });
+      }
     }
+    // Checkpoint: "magic" anywhere
+    else if (PATTERNS.checkpoint.input?.test(msg)) {
+      if (!seenHashes.has(msgId)) {
+        seenHashes.add(msgId);
+        events.push({
+          type: "checkpoint",
+          timestamp: now,
+          details: `${msg.slice(0, 50).replace(/[#\n]/g, '').trim()}`,
+          confidence: PATTERNS.checkpoint.confidence,
+        });
+      }
+    }
+    // Issue: negative signals
+    else if (PATTERNS.issue.input?.test(msg)) {
+      if (!seenHashes.has(msgId)) {
+        seenHashes.add(msgId);
+        events.push({
+          type: "issue",
+          timestamp: now,
+          details: `${msg.slice(0, 50).replace(/[#\n]/g, '').trim()}`,
+          confidence: PATTERNS.issue.confidence,
+        });
+      }
+    }
+    msgIndex++;
   }
 
   // Check tool outputs for success patterns
@@ -145,8 +199,15 @@ export async function GET(
 
     const anchor = await anchorRes.json();
 
+    // Also check goal/summary for magic (session start trigger)
+    const allUserMessages = [
+      anchor.goal || "",
+      anchor.session_summary || "",
+      ...(anchor.recent_user_messages || [])
+    ];
+
     const events = detectSuccessEvents(
-      anchor.recent_user_messages || [],
+      allUserMessages,
       anchor.recent_assistant_messages || [],
       anchor.blockers || [] // blockers contains tool output
     );

@@ -26,11 +26,15 @@ export async function GET(): Promise<NextResponse> {
   const pythonScript = `
 import weave
 import json
+import os
+
+# Bypass netrc parsing issues
+os.environ['NETRC'] = '/dev/null'
 
 client = weave.init('autofork-console')
 
-# Get recent calls
-calls = list(client.get_calls(limit=50))
+# Get recent calls - fetch more to ensure we get newest
+calls = list(client.get_calls(limit=200))
 
 results = []
 for call in calls:
