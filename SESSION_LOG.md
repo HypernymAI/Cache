@@ -147,6 +147,26 @@ The [wandb-mcp-server](https://github.com/wandb/wandb-mcp-server) provides:
 - `query_weave_traces_tool` - Query successful patterns
 - Agents can ask: "show Next.js deploy patterns"
 
+**Setup** (add to Claude's MCP config or `~/.claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "wandb": {
+      "command": "npx",
+      "args": ["-y", "@wandb/mcp-server"],
+      "env": {
+        "WANDB_API_KEY": "your-key-here"
+      }
+    }
+  }
+}
+```
+
+**Query examples**:
+- "Show successful deploy patterns from autofork-console"
+- "What commits worked for auth features?"
+- "Find patterns with Next.js tech stack"
+
 ---
 
 ## Weave Integration Plan

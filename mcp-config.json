@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "wandb": {
+      "command": "npx",
+      "args": ["-y", "@wandb/mcp-server"],
+      "env": {
+        "WANDB_API_KEY": "${WANDB_API_KEY}"
+      }
+    }
+  }
+}
