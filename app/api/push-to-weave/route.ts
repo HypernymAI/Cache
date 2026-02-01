@@ -49,6 +49,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 import weave
 import os
 
+# Bypass netrc parsing issues by pointing to empty file
+os.environ['NETRC'] = '/dev/null'
+
 weave.init('autofork-console')
 
 @weave.op()
@@ -70,6 +73,12 @@ result = log_pattern(
     is_gold=${anchor.is_gold ? "True" : "False"},
     session_id=${JSON.stringify(anchor.session_id)}
 )
+
+# Ensure data is flushed to Weave
+import time
+time.sleep(0.5)  # Give Weave time to sync
+weave.finish()
+
 print(f"Pushed to Weave: {result.get('success_type', 'unknown')}")
 `;
 

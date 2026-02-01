@@ -58,3 +58,62 @@ body {
     opacity: 0;
   }
 }
+
+/* New event highlight animation */
+@keyframes highlight-new {
+  0% {
+    background-color: rgba(34, 197, 94, 0.3);
+    transform: translateX(-5px);
+  }
+  100% {
+    background-color: transparent;
+    transform: translateX(0);
+  }
+}
+
+.animate-highlight {
+  animation: highlight-new 1s ease-out forwards;
+}
+
+/* Subtle glow pulse for active elements */
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(139, 92, 246, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 15px rgba(139, 92, 246, 0.5);
+  }
+}
+
+.animate-glow {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+/* Arrow flow animation */
+@keyframes arrow-flow {
+  0%, 100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.animate-arrow {
+  animation: arrow-flow 1.5s ease-in-out infinite;
+}
+
+/* Counter increment animation */
+@keyframes count-up {
+  from {
+    transform: scale(1.2);
+    color: rgb(34, 197, 94);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+.animate-count {
+  animation: count-up 0.3s ease-out;
+}
