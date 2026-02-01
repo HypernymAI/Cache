@@ -77,10 +77,75 @@ The goal: Agents that get better over time by learning from their own successes.
 ### The Learning Loop Progress
 ```
 [x] Session succeeds → Capture what worked (SUCCESS CAPTURE - DONE)
-[ ] Compress to pattern (Nick working on Neptune inference separately)
-[ ] Store in cache (NEXT: Behavior cache)
-[ ] Feed to future sessions (NEXT: Feedback injection)
+[x] Auto-detect success → deterministic fallback (SESSION 3)
+[x] Auto-push to Weave → on gold anchors (SESSION 3)
+[ ] Compress to pattern (Neptune/Claudestorm handles this)
+[ ] MCP query → agents retrieve patterns from Weave
 ```
+
+---
+
+## Session 3 Summary (2026-02-01)
+
+### Architecture Clarified
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                                                             │
+│   Claude Code ←───────── MCP ←───────── Weave              │
+│   (agent working)    (query patterns)   (org aggregate)    │
+│        │                                    ↑               │
+│        ↓                                    │               │
+│   Claudestorm ──────→ AutoFork ────────────┘               │
+│   (track/compress)    (curate/push)                        │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+- **Claude Code**: The agent doing work (this session)
+- **Claudestorm**: Tracks, categorizes, compresses in background
+- **AutoFork Console**: Curates best patterns, pushes to Weave
+- **Weave**: Org-wide aggregate store
+- **W&B MCP**: Agents query successful patterns (already exists!)
+
+### What We Built
+
+**Local Success Detection** (`app/api/success-events/[sessionId]/route.ts`)
+- Fallback when claudestorm endpoint unavailable
+- Deterministic pattern matching:
+  - `git_commit`: Bash tool + commit output patterns
+  - `tests_passed`: "passed", "✓", "0 failed"
+  - `deploy_success`: vercel/netlify URLs
+  - `user_confirmation`: "done", "thanks", "perfect"
+  - `build_success`: "compiled successfully"
+- Returns confidence scores + should_auto_anchor flag
+
+**Auto-Push to Weave** (`app/api/push-to-weave/route.ts`)
+- Triggers push_to_weave.py script
+- Called automatically when gold anchors created
+- Manual "→ Weave" button in header
+
+**Enhanced Weave Push** (`scripts/push_to_weave.py`)
+- Auto-categorizes anchors:
+  - `goal_type`: deploy, testing, auth, api, ui, bugfix, refactor, database, feature
+  - `tech_stack`: nextjs, react, typescript, python, etc.
+- Makes patterns queryable via W&B MCP
+
+### The Flow (Fully Automatic)
+```
+Agent works → Success detected → Auto-anchor
+                                     ↓
+                              Gold marked (strong signals)
+                                     ↓
+                              Auto-push to Weave
+                                     ↓
+                              W&B MCP queryable
+```
+
+### W&B MCP Integration
+The [wandb-mcp-server](https://github.com/wandb/wandb-mcp-server) provides:
+- `query_weave_traces_tool` - Query successful patterns
+- Agents can ask: "show Next.js deploy patterns"
 
 ---
 

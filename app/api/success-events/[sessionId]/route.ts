@@ -1,0 +1,184 @@
+import { NextRequest, NextResponse } from "next/server";
+
+const CLAUDESTORM_API = "http://localhost:8100";
+
+interface SuccessEvent {
+  type: "git_commit" | "tests_passed" | "deploy_success" | "user_confirmation" | "build_success";
+  timestamp: string;
+  details: string;
+  confidence: number;
+}
+
+// Deterministic success detection patterns
+const PATTERNS = {
+  git_commit: {
+    tool: /Bash.*git commit/i,
+    output: /\[[\w-]+\s+[\da-f]+\]|committed|create mode/i,
+    confidence: 0.9,
+  },
+  tests_passed: {
+    output: /(\d+)\s*(tests?\s+)?pass(ed)?|✓|PASS|All tests|0 failed/i,
+    exclude: /fail(ed)?|error/i,
+    confidence: 0.85,
+  },
+  deploy_success: {
+    output: /deployed|https:\/\/([\w-]+\.vercel\.app|[\w-]+\.netlify\.app)|Production:|Successfully pushed/i,
+    exclude: /fail|error/i,
+    confidence: 0.9,
+  },
+  user_confirmation: {
+    input: /^(done|thanks|thank you|perfect|looks good|great|awesome|that works|ship it|lgtm|nice)[\s.!]*$/i,
+    confidence: 0.7,
+  },
+  build_success: {
+    output: /compiled successfully|Build succeeded|Built in|build complete|webpack.*compiled/i,
+    exclude: /error|fail/i,
+    confidence: 0.8,
+  },
+};
+
+function detectSuccessEvents(
+  recentUserMessages: string[],
+  recentAssistantMessages: string[],
+  toolResults: string[]
+): SuccessEvent[] {
+  const events: SuccessEvent[] = [];
+  const now = new Date().toISOString();
+
+  // Check user confirmations
+  for (const msg of recentUserMessages) {
+    if (PATTERNS.user_confirmation.input?.test(msg.trim())) {
+      events.push({
+        type: "user_confirmation",
+        timestamp: now,
+        details: msg.slice(0, 50),
+        confidence: PATTERNS.user_confirmation.confidence,
+      });
+      break; // Only one confirmation needed
+    }
+  }
+
+  // Check tool outputs for success patterns
+  const combinedOutput = [...recentAssistantMessages, ...toolResults].join("\n");
+
+  // Git commits
+  if (PATTERNS.git_commit.output.test(combinedOutput)) {
+    const match = combinedOutput.match(/\[[\w-]+\s+([\da-f]+)\]/);
+    events.push({
+      type: "git_commit",
+      timestamp: now,
+      details: match ? `Commit ${match[1]}` : "Commit successful",
+      confidence: PATTERNS.git_commit.confidence,
+    });
+  }
+
+  // Tests passed
+  if (PATTERNS.tests_passed.output.test(combinedOutput) &&
+      !PATTERNS.tests_passed.exclude?.test(combinedOutput)) {
+    const match = combinedOutput.match(/(\d+)\s*(tests?\s+)?pass/i);
+    events.push({
+      type: "tests_passed",
+      timestamp: now,
+      details: match ? `${match[1]} tests passed` : "Tests passed",
+      confidence: PATTERNS.tests_passed.confidence,
+    });
+  }
+
+  // Deploy success
+  if (PATTERNS.deploy_success.output.test(combinedOutput) &&
+      !PATTERNS.deploy_success.exclude?.test(combinedOutput)) {
+    const urlMatch = combinedOutput.match(/https:\/\/[\w.-]+\.(vercel|netlify)\.app[^\s)"]*/);
+    events.push({
+      type: "deploy_success",
+      timestamp: now,
+      details: urlMatch ? urlMatch[0] : "Deployment successful",
+      confidence: PATTERNS.deploy_success.confidence,
+    });
+  }
+
+  // Build success
+  if (PATTERNS.build_success.output.test(combinedOutput) &&
+      !PATTERNS.build_success.exclude?.test(combinedOutput)) {
+    events.push({
+      type: "build_success",
+      timestamp: now,
+      details: "Build completed successfully",
+      confidence: PATTERNS.build_success.confidence,
+    });
+  }
+
+  return events;
+}
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ sessionId: string }> }
+) {
+  const { sessionId } = await params;
+  const sinceTimestamp = request.nextUrl.searchParams.get("since_timestamp");
+
+  // Try claudestorm's endpoint first
+  try {
+    const url = sinceTimestamp
+      ? `${CLAUDESTORM_API}/api/autofork/session/${sessionId}/success-events?since_timestamp=${encodeURIComponent(sinceTimestamp)}`
+      : `${CLAUDESTORM_API}/api/autofork/session/${sessionId}/success-events`;
+
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(2000),
+      cache: "no-store"
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      return NextResponse.json(data);
+    }
+  } catch {
+    // Fallback to local detection
+  }
+
+  // Fallback: fetch anchor data and detect locally
+  try {
+    const anchorRes = await fetch(
+      `${CLAUDESTORM_API}/api/autofork/session/${sessionId}/anchor`,
+      { cache: "no-store" }
+    );
+
+    if (!anchorRes.ok) {
+      return NextResponse.json(
+        { error: "Session not found" },
+        { status: 404 }
+      );
+    }
+
+    const anchor = await anchorRes.json();
+
+    const events = detectSuccessEvents(
+      anchor.recent_user_messages || [],
+      anchor.recent_assistant_messages || [],
+      anchor.blockers || [] // blockers contains tool output
+    );
+
+    // Filter by timestamp if provided
+    const filteredEvents = sinceTimestamp
+      ? events.filter((e) => e.timestamp > sinceTimestamp)
+      : events;
+
+    const totalConfidence = filteredEvents.reduce((sum, e) => sum + e.confidence, 0);
+    const eventTypes = new Set(filteredEvents.map((e) => e.type));
+
+    return NextResponse.json({
+      session_id: sessionId,
+      events: filteredEvents,
+      event_count: filteredEvents.length,
+      total_confidence: Math.round(totalConfidence * 100) / 100,
+      should_auto_anchor: totalConfidence >= 1.5 || eventTypes.has("deploy_success"),
+      should_mark_gold: totalConfidence >= 2.0 || eventTypes.has("deploy_success"),
+      source: "local_detection", // Indicates fallback was used
+    });
+  } catch (e) {
+    return NextResponse.json(
+      { error: "Failed to detect success events" },
+      { status: 500 }
+    );
+  }
+}

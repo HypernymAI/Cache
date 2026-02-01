@@ -233,6 +233,7 @@ export default function AutoForkConsole() {
   const [lastEventTimestamp, setLastEventTimestamp] = useState<string | null>(null);
   const [notification, setNotification] = useState<string | null>(null);
   const [recentSuccessEvents, setRecentSuccessEvents] = useState<SuccessEvent[]>([]);
+  const [pushingToWeave, setPushingToWeave] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -381,6 +382,11 @@ export default function AutoForkConsole() {
       setNotification(`Auto-anchor created: ${eventTypes}${shouldMarkGold ? " (marked gold)" : ""}`);
       setTimeout(() => setNotification(null), 4000);
 
+      // Auto-push gold anchors to Weave
+      if (shouldMarkGold) {
+        fetch("/api/push-to-weave", { method: "POST" }).catch(() => {});
+      }
+
     } catch (e) {
       console.error("Failed to create auto-anchor:", e);
     }
@@ -392,9 +398,10 @@ export default function AutoForkConsole() {
 
     const checkSuccessEvents = async () => {
       try {
+        // Use local API route (tries claudestorm first, falls back to local detection)
         const url = lastEventTimestamp
-          ? `${CLAUDESTORM_API}/api/autofork/session/${selectedSessionId}/success-events?since_timestamp=${encodeURIComponent(lastEventTimestamp)}`
-          : `${CLAUDESTORM_API}/api/autofork/session/${selectedSessionId}/success-events`;
+          ? `/api/success-events/${selectedSessionId}?since_timestamp=${encodeURIComponent(lastEventTimestamp)}`
+          : `/api/success-events/${selectedSessionId}`;
 
         const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
         if (!res.ok) return;
@@ -476,6 +483,31 @@ export default function AutoForkConsole() {
     setTranscript("");
   }, [transcript, currentSessionId, eventLog, lastGoldAnchor, forkThreshold]);
 
+  const pushToWeave = useCallback(async () => {
+    if (pushingToWeave) return;
+    setPushingToWeave(true);
+    try {
+      const res = await fetch("/api/push-to-weave", { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        setNotification("Pushed to Weave successfully");
+        const newEvent: EventLogEntry = {
+          id: generateId(),
+          timestamp: new Date().toISOString(),
+          message: "WEAVE_PUSH: anchors synced",
+        };
+        setEventLog((prev) => [newEvent, ...prev]);
+      } else {
+        setNotification("Weave push failed");
+      }
+    } catch {
+      setNotification("Weave push failed");
+    } finally {
+      setPushingToWeave(false);
+      setTimeout(() => setNotification(null), 3000);
+    }
+  }, [pushingToWeave]);
+
   const handleMarkGold = useCallback(() => {
     if (!latestAnchor || latestAnchor.isGold) return;
     setAnchors((prev) =>
@@ -487,7 +519,9 @@ export default function AutoForkConsole() {
       message: `MARKED_GOLD: anchorId=${latestAnchor.id.slice(0, 8)}`,
     };
     setEventLog((prev) => [newEvent, ...prev]);
-  }, [latestAnchor]);
+    // Auto-push to Weave when gold is marked
+    pushToWeave();
+  }, [latestAnchor, pushToWeave]);
 
   const handleClearAll = useCallback(() => {
     setAnchors([]);
@@ -730,6 +764,17 @@ export default function AutoForkConsole() {
           >
             <span className={`w-2 h-2 rounded-full ${autoAnchorEnabled ? "bg-violet-400 animate-pulse" : "bg-zinc-600"}`} />
             <span className="text-xs">Auto-Anchor</span>
+          </button>
+          <button
+            onClick={pushToWeave}
+            disabled={pushingToWeave}
+            className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border transition-all ${
+              pushingToWeave
+                ? "bg-orange-900/50 border-orange-500/50 text-orange-300"
+                : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-orange-300 hover:border-orange-500/50"
+            }`}
+          >
+            <span className="text-xs">{pushingToWeave ? "Pushing..." : "→ Weave"}</span>
           </button>
         </div>
       </header>
