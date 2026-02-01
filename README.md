@@ -1,8 +1,12 @@
 # Caché
-See at https://cache.hypernym.ai
+
 **Self-improving agents through cached successes.**
 
 Agents forget everything between sessions. Caché captures what works and makes it queryable—so future agents start smarter.
+
+See at 
+https://cache.hypernym.ai
+https://cache.hypernym.ai/?demo=true
 
 ## The Problem
 
