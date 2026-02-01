@@ -1,116 +1,162 @@
-# AutoFork Console - Session Log
+# AutoFork Console - Project History
 
-## Project Overview
-A single-page tool for managing agent memory across long coding sessions. Detects when to "fork" (start fresh with a compact summary) and generates resume prompts to carry forward essential state.
+## What This Is
+A tool for managing agent memory across long coding sessions. Detects when to "fork" (start fresh with compact context) and generates resume prompts to carry forward essential state.
 
-## Completed This Session
+---
 
-### 1. Core Implementation (`app/page.tsx`)
+## Session 1 Summary (2026-01-31)
+
+### What We Built
+
+**AutoFork Console (`hackathon_site/`)**
+- Single-page Next.js app at `app/page.tsx`
 - Transcript input with token estimation
 - Anchor extraction (goals, plans, constraints, blockers)
-- Fork detection signals:
-  - **Success**: "deployed", "tests passed", "merged", etc.
-  - **Drift**: "ignore that", "start over", repeated errors
-  - **Token limit**: Configurable threshold (default 64k)
-- Resume prompt generation with gold anchor fallback
-- localStorage persistence for all state
-- Load Transcript button (loads sample from `/public/transcripts/`)
+- Fork detection: success signals, drift signals, token threshold (64k configurable)
+- Gold anchor marking for stable checkpoints
+- Resume prompt generation with recovery rules
+- localStorage persistence
+- Live Claudestorm integration with session dropdown
 
-### 2. Project Setup
-- Next.js 14 + TypeScript + Tailwind
-- Vercel-ready (build passes)
-- GitHub repo: `HypernymAI/autofork-console` (private)
+**Claudestorm API (`claudestorm/core/autofork_api.py`)**
+- `GET /api/autofork/health` — Health check
+- `GET /api/autofork/sessions` — List active sessions with token counts
+- `GET /api/autofork/session/{id}` — Session detail with conversation analysis
+- `GET /api/autofork/session/{id}/anchor` — Rich anchor data extraction
+- Pulls: recent user messages, assistant messages, files touched, blockers, drift/success signals
+- Uses claudestorm's 8-dimension conversation analysis
 
-### 3. Claudestorm Integration Prep
-- Created branch `autofork-integration` in claudestorm repo
-- Explored claudestorm codebase - identified key integration points:
-  - Session parsing (JSONL → structured data)
-  - Conversation analysis (8 dimensions including error_cascade)
-  - LMDB fast path for real-time data
-  - Float processing pipeline
+### Current State
+- **Working**: API returns rich data, frontend displays it, anchors are created
+- **GitHub**: `HypernymAI/autofork-console` (private)
+- **Claudestorm branch**: `autofork-integration` (not pushed yet)
 
-## Architecture Decisions
-- Fork threshold: 64k tokens (was 6k, updated per user feedback)
-- Threshold is user-configurable via UI
-- All state in localStorage (no backend needed for MVP)
+### Known Issues
+1. **Blocker detection is noisy** — picks up console output as "errors"
+2. **No auto-anchoring** — requires manual "Create Anchor" click
+3. **Goal always shows first message** — by design, but could be confusing
 
-## Files Structure
+---
+
+## Next Steps
+
+### Small (Quick Wins)
+- [ ] Clean up blocker detection — filter out console output, JSON, etc.
+- [ ] Better labeling in UI — distinguish "Original Task" vs "Recent Activity"
+- [ ] Remove debug console.log statements
+- [ ] Commit claudestorm changes and push `autofork-integration` branch
+- [ ] Add loading/error states for API failures
+- [ ] Truncate long text more gracefully in UI
+
+### Medium (Features)
+- [ ] Auto-refresh sessions list (currently manual)
+- [ ] Click on timeline anchor to view its details
+- [ ] Edit/refine extracted anchor before saving
+- [ ] Export anchors to JSON file
+- [ ] Session filtering (by project, by token count)
+
+### Big (Architecture)
+- [ ] **Auto-anchoring**: Hook into claudestorm events to auto-create anchors on:
+  - Git commits
+  - Success signals (deploy, tests pass)
+  - Token threshold crossed
+  - Drift detected
+- [ ] **WebSocket**: Real-time updates from claudestorm instead of polling
+- [ ] **Anchor diffing**: Show what changed between anchors
+- [ ] **Multi-session view**: Compare anchors across different sessions
+- [ ] **Integration with Claude Code**: Auto-inject resume prompt on new session
+
+---
+
+## File Structure
+
 ```
 hackathon_site/
 ├── app/
 │   ├── page.tsx          # Main component (all logic)
 │   ├── layout.tsx        # Root layout
-│   └── globals.css       # Tailwind + custom scrollbar
+│   └── globals.css       # Tailwind + scrollbar
 ├── public/
-│   └── transcripts/
-│       └── spacecar_excerpt_80k.txt  # Sample transcript
-├── package.json
-├── tsconfig.json
-├── next.config.js
-├── tailwind.config.js
-└── postcss.config.js
+│   └── transcripts/      # Sample data
+├── SESSION_LOG.md        # This file
+└── [config files]
+
+claudestorm/core/
+└── autofork_api.py       # NEW - FastAPI endpoints (on autofork-integration branch)
 ```
 
-## Session 1 Final Changes
+---
 
-### Added Claudestorm Integration
-1. **Created `core/autofork_api.py` in claudestorm** (`autofork-integration` branch)
-   - `GET /api/autofork/health` - Health check
-   - `GET /api/autofork/sessions` - List active sessions
-   - `GET /api/autofork/session/{id}` - Session detail with analysis
-   - `GET /api/autofork/session/{id}/anchor` - Pre-computed anchor data
-   - Runs on port 8100
+## How to Run
 
-2. **Updated AutoFork Console to consume API**
-   - Auto-detects claudestorm connection (polls every 30s)
-   - Session dropdown when connected
-   - "Fetch Session" button creates anchor from API data
-   - Uses claudestorm's conversation analysis (error_cascade, semantic_coherence)
-   - Smarter drift/success detection via API signals
-
-### To Run the Integration
 ```bash
-# Terminal 1: Start claudestorm API
+# Terminal 1: Claudestorm API
 cd ~/Desktop/source/claudestorm
-python -m uvicorn core.autofork_api:app --port 8100
+CLAUDESTORM_DB_DIR=. .venv/bin/python -m uvicorn core.autofork_api:app --port 8100
 
-# Terminal 2: Start AutoFork Console
+# Terminal 2: AutoFork Console
 cd ~/Desktop/source/hackathon_site
 npm run dev
 ```
 
+Then open http://localhost:3000
+
+---
+
+## API Reference
+
+### GET /api/autofork/sessions
+Returns list of active sessions with token counts.
+
+### GET /api/autofork/session/{id}
+Returns:
+- `stats`: token counts, message count, timestamps
+- `analysis`: conversation dimension scores (error_cascade, lexical_diversity, etc.)
+- `drift_signals`: ["high_error_cascade", "repeated_errors"]
+- `success_signals`: ["success_keywords_detected"]
+- `should_fork`: boolean
+
+### GET /api/autofork/session/{id}/anchor
+Returns:
+- `goal`: Original task (first substantial user message)
+- `session_summary`: From claudestorm metadata
+- `recent_user_messages`: Last 3 user messages
+- `recent_assistant_messages`: Last 3 assistant messages
+- `files_touched`: Recently edited files
+- `blockers`: Recent error messages
+- `recent_tools`: Tool usage counts
+
+---
+
+## Resume Prompt Structure
+
+```markdown
+## Task
+[Session summary if available]
+
+## Current Goal
+[Original task/goal]
+
+## Last Stable Checkpoint (Gold Anchor)
+[Previous gold anchor summary if exists]
+
+## Files in Progress
+- file1.tsx
+- file2.py
+
+## Recent Context
+Last user request: [most recent user message]
+
+## Current Blockers
+1. [error 1]
+2. [error 2]
+
 ## Next Steps
+1. Address blockers
+2. Continue work on [file]
+3. Verify changes
 
-### Immediate (Next Session)
-1. Test the integration end-to-end (start claudestorm API, verify sessions appear)
-2. Push claudestorm changes (review `autofork-integration` branch, merge if ready)
-3. Polish UI (better session display with project name, loading states, error handling)
-4. Deploy to Vercel for demo
-
-### Future
-- WebSocket for real-time session updates
-- Auto-trigger fork when claudestorm detects drift
-- Gold anchor sync across sessions
-- Export anchors to file for external tools
-
-## Integration Points in Claudestorm
-
-Key files:
-- `core/autofork_api.py` (NEW - created this session) - FastAPI endpoints for AutoFork
-- `core/databases/session_database.py` - session queries (read-only access)
-- `core/conversation_analysis/` - 8-dimension analysis (error_cascade, semantic_coherence, etc.)
-
-Key data available:
-- `SessionState` - tokens, timestamps, files touched
-- Conversation analysis - error_cascade, lexical_diversity, semantic_coherence
-- Float status - completion stages, proofs
-
-## Running Locally
-```bash
-cd ~/Desktop/source/hackathon_site
-npm run dev  # localhost:3000
+## Recovery Rule
+If you drift or get stuck, restate the goal anchor and continue from the last stable checkpoint.
 ```
-
-## Git Status
-- hackathon_site: `main` branch, pushed to HypernymAI/autofork-console
-- claudestorm: `autofork-integration` branch, local only (not pushed)

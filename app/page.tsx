@@ -37,11 +37,8 @@ interface ClaudestormSessionDetail {
     last_timestamp: string;
   };
   analysis: {
-    scores: {
-      error_cascade: number;
-      semantic_coherence: number;
-      lexical_diversity: number;
-    };
+    scores: Record<string, number>;
+    sample_size: number;
   } | null;
   error_count: number;
   drift_signals: string[];
@@ -52,7 +49,11 @@ interface ClaudestormSessionDetail {
 interface ClaudestormAnchorData {
   session_id: string;
   goal: string;
+  session_summary: string | null;
+  recent_user_messages: string[];
+  recent_assistant_messages: string[];
   blockers: string[];
+  files_touched: string[];
   recent_tools: Record<string, number>;
   total_tokens: number;
   summary: string;
@@ -398,6 +399,12 @@ export default function AutoForkConsole() {
       const detail: ClaudestormSessionDetail = await detailRes.json();
       const anchorData: ClaudestormAnchorData = await anchorRes.json();
 
+      // DEBUG
+      console.log("=== CLAUDESTORM RESPONSE ===");
+      console.log("recent_user_messages:", anchorData.recent_user_messages);
+      console.log("files_touched:", anchorData.files_touched);
+      console.log("goal length:", anchorData.goal?.length);
+
       // Determine status from signals
       let status: Anchor["status"] = "stable";
       if (detail.success_signals.length > 0) status = "success";
@@ -405,31 +412,84 @@ export default function AutoForkConsole() {
 
       // Build summary from API data
       const summaryParts: string[] = [];
-      summaryParts.push(`GOAL: ${anchorData.goal.slice(0, 200)}`);
+
+      // Task/Goal
+      if (anchorData.session_summary) {
+        summaryParts.push(`TASK: ${anchorData.session_summary.slice(0, 200)}`);
+      }
+      summaryParts.push(`GOAL: ${anchorData.goal.slice(0, 300)}`);
+
+      // Files being worked on
+      if (anchorData.files_touched.length > 0) {
+        summaryParts.push(`FILES: ${anchorData.files_touched.join(", ")}`);
+      }
+
+      // Recent context
+      if (anchorData.recent_user_messages.length > 0) {
+        summaryParts.push(`RECENT USER: ${anchorData.recent_user_messages[0].slice(0, 150)}...`);
+      }
+
+      // Blockers
       if (anchorData.blockers.length > 0) {
-        summaryParts.push(`BLOCKERS: ${anchorData.blockers.slice(0, 2).join("; ").slice(0, 200)}`);
+        summaryParts.push(`BLOCKERS (${anchorData.blockers.length}): ${anchorData.blockers[0].slice(0, 150)}...`);
       }
-      if (Object.keys(anchorData.recent_tools).length > 0) {
-        const tools = Object.entries(anchorData.recent_tools).slice(0, 3).map(([t, c]) => `${t}(${c})`).join(", ");
-        summaryParts.push(`RECENT TOOLS: ${tools}`);
+
+      // Signals
+      if (detail.drift_signals.length > 0) {
+        summaryParts.push(`⚠ DRIFT: ${detail.drift_signals.join(", ")}`);
       }
-      if (detail.analysis) {
-        summaryParts.push(`ANALYSIS: error_cascade=${detail.analysis.scores.error_cascade.toFixed(2)}, coherence=${detail.analysis.scores.semantic_coherence.toFixed(2)}`);
+      if (detail.success_signals.length > 0) {
+        summaryParts.push(`✓ SUCCESS: ${detail.success_signals.join(", ")}`);
       }
 
       const summary = summaryParts.join("\n");
 
+      // DEBUG
+      console.log("=== BUILT SUMMARY ===");
+      console.log(summary);
+
       // Generate resume prompt
       const resumeParts: string[] = [];
-      resumeParts.push(`## Current Goal\n${anchorData.goal.slice(0, 300)}`);
+
+      // Goal/Task
+      if (anchorData.session_summary) {
+        resumeParts.push(`## Task\n${anchorData.session_summary}`);
+      }
+      resumeParts.push(`## Current Goal\n${anchorData.goal.slice(0, 500)}`);
+
+      // Gold anchor fallback
       if (lastGoldAnchor) {
         resumeParts.push(`## Last Stable Checkpoint (Gold Anchor)\n${lastGoldAnchor.summary}`);
       }
-      if (anchorData.blockers.length > 0) {
-        resumeParts.push(`## Current Blockers\n${anchorData.blockers.map((b, i) => `${i + 1}. ${b.slice(0, 100)}`).join("\n")}`);
+
+      // Current context
+      if (anchorData.files_touched.length > 0) {
+        resumeParts.push(`## Files in Progress\n${anchorData.files_touched.map(f => `- ${f}`).join("\n")}`);
       }
-      resumeParts.push(`## Next Steps\n1. Review current state\n2. Address blockers if any\n3. Continue implementation`);
-      resumeParts.push(`## Recovery Rule\nIf you drift, restate the goal anchor and continue from the last stable anchor.`);
+
+      // Recent activity
+      if (anchorData.recent_user_messages.length > 0) {
+        resumeParts.push(`## Recent Context\nLast user request: ${anchorData.recent_user_messages[0].slice(0, 200)}`);
+      }
+
+      // Blockers
+      if (anchorData.blockers.length > 0) {
+        resumeParts.push(`## Current Blockers\n${anchorData.blockers.slice(0, 3).map((b, i) => `${i + 1}. ${b.slice(0, 150)}`).join("\n")}`);
+      }
+
+      // Next steps based on context
+      const nextSteps = [];
+      if (anchorData.blockers.length > 0) {
+        nextSteps.push("Address the blockers listed above");
+      }
+      if (anchorData.files_touched.length > 0) {
+        nextSteps.push(`Continue work on ${anchorData.files_touched[0]}`);
+      }
+      nextSteps.push("Verify changes work as expected");
+      resumeParts.push(`## Next Steps\n${nextSteps.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
+
+      // Recovery rule
+      resumeParts.push(`## Recovery Rule\nIf you drift or get stuck, restate the goal anchor and continue from the last stable checkpoint.`);
 
       const resumePrompt = resumeParts.join("\n\n");
 
@@ -461,7 +521,16 @@ export default function AutoForkConsole() {
         isGold: false,
       };
 
-      setAnchors((prev) => [newAnchor, ...prev]);
+      console.log("=== CREATING ANCHOR ===");
+      console.log("summary:", newAnchor.summary);
+      console.log("status:", newAnchor.status);
+
+      setAnchors((prev) => {
+        console.log("Previous anchors:", prev.length);
+        const updated = [newAnchor, ...prev];
+        console.log("New anchors:", updated.length);
+        return updated;
+      });
 
       // Log the fetch
       const fetchEvent: EventLogEntry = {
@@ -517,10 +586,6 @@ export default function AutoForkConsole() {
         </h1>
         <p className="text-zinc-500 text-sm">Self-improving agent memory system</p>
         <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
-          <div className="inline-flex items-center gap-2 px-3 py-1 bg-zinc-900 rounded-full border border-zinc-800">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-xs text-zinc-400 font-mono">session: {currentSessionId.slice(0, 8)}</span>
-          </div>
           <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-zinc-900 rounded-full border border-zinc-800">
             <span className="text-xs text-zinc-500">fork @</span>
             <input
@@ -532,6 +597,10 @@ export default function AutoForkConsole() {
               step={1000}
             />
             <span className="text-xs text-zinc-500">tokens</span>
+          </div>
+          <div className="inline-flex items-center gap-2 px-3 py-1 bg-zinc-900 rounded-full border border-zinc-800">
+            <span className={`w-2 h-2 rounded-full ${claudestormConnected ? "bg-emerald-500 animate-pulse" : "bg-zinc-600"}`} />
+            <span className="text-xs text-zinc-400">{claudestormConnected ? "Claudestorm" : "Offline"}</span>
           </div>
         </div>
       </header>
@@ -555,13 +624,7 @@ export default function AutoForkConsole() {
               disabled={!transcript.trim()}
               className="px-5 py-2.5 bg-sky-600 hover:bg-sky-500 disabled:bg-zinc-700 disabled:text-zinc-500 rounded-lg font-medium transition-all shadow-lg shadow-sky-500/20 disabled:shadow-none"
             >
-              Update
-            </button>
-            <button
-              onClick={handleLoadTranscript}
-              className="px-5 py-2.5 bg-violet-600 hover:bg-violet-500 rounded-lg font-medium transition-all shadow-lg shadow-violet-500/20"
-            >
-              Load Transcript
+              Parse Transcript
             </button>
             <button
               onClick={handleClearAll}
@@ -571,41 +634,46 @@ export default function AutoForkConsole() {
             </button>
           </div>
 
-          {/* Claudestorm Integration */}
-          <div className="mt-4 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700/50">
-            <div className="flex items-center gap-2 mb-2">
-              <span className={`w-2 h-2 rounded-full ${claudestormConnected ? "bg-emerald-500" : "bg-zinc-600"}`} />
-              <span className="text-xs text-zinc-400">
-                {claudestormConnected ? "Claudestorm connected" : "Claudestorm offline"}
-              </span>
-            </div>
-            {claudestormConnected && claudestormSessions.length > 0 && (
+          {/* Claudestorm Integration - Primary */}
+          {claudestormConnected && claudestormSessions.length > 0 && (
+            <div className="mt-4 p-4 bg-emerald-950/30 rounded-lg border border-emerald-800/50">
+              <div className="text-xs text-emerald-400 font-medium mb-2">LIVE SESSIONS</div>
               <div className="flex flex-wrap gap-2">
                 <select
                   value={selectedSessionId || ""}
                   onChange={(e) => setSelectedSessionId(e.target.value || null)}
                   className="flex-1 min-w-[200px] px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 >
-                  <option value="">Select session...</option>
+                  <option value="">Select a session...</option>
                   {claudestormSessions.map((s) => (
                     <option key={s.session_id} value={s.session_id}>
-                      {s.session_id.slice(0, 8)} — {s.total_tokens.toLocaleString()} tokens
+                      {s.total_tokens.toLocaleString()} tok · {s.message_count} msgs · {s.session_id.slice(0, 8)}
                     </option>
                   ))}
                 </select>
                 <button
                   onClick={handleFetchFromClaudestorm}
                   disabled={!selectedSessionId || loadingApi}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:text-zinc-500 rounded-lg text-sm font-medium transition-all"
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:text-zinc-500 rounded-lg text-sm font-medium transition-all shadow-lg shadow-emerald-500/20 disabled:shadow-none"
                 >
-                  {loadingApi ? "Fetching..." : "Fetch Session"}
+                  {loadingApi ? "Fetching..." : "Create Anchor"}
                 </button>
               </div>
-            )}
-            {claudestormConnected && claudestormSessions.length === 0 && (
-              <p className="text-xs text-zinc-500">No active sessions found</p>
-            )}
-          </div>
+            </div>
+          )}
+
+          {/* Manual fallback */}
+          {!claudestormConnected && (
+            <div className="mt-4 p-3 bg-zinc-800/30 rounded-lg border border-zinc-700/30">
+              <p className="text-xs text-zinc-500 mb-2">Claudestorm offline — using manual mode</p>
+              <button
+                onClick={handleLoadTranscript}
+                className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 rounded-lg text-sm font-medium transition-all"
+              >
+                Load Sample Transcript
+              </button>
+            </div>
+          )}
 
           {transcript && (
             <div className="mt-3 text-xs text-zinc-500">
