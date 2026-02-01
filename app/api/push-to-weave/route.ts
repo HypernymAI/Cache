@@ -67,7 +67,7 @@ result = log_pattern(
     output=${JSON.stringify(anchor.output)},
     success_type=${JSON.stringify(anchor.success_type)},
     tokens=${anchor.tokens},
-    is_gold=${anchor.is_gold},
+    is_gold=${anchor.is_gold ? "True" : "False"},
     session_id=${JSON.stringify(anchor.session_id)}
 )
 print(f"Pushed to Weave: {result.get('success_type', 'unknown')}")

@@ -123,11 +123,13 @@ export default function AutoForkConsole() {
   const [claudestormConnected, setClaudestormConnected] = useState(false);
   const [claudestormSessions, setClaudestormSessions] = useState<ClaudestormSession[]>([]);
   const sessionTimestampsRef = useRef<Record<string, string>>({}); // Track last event per session (ref to avoid re-renders)
+  const pushedEventsRef = useRef<Set<string>>(new Set()); // Track pushed event IDs to avoid duplicates
 
   // Event tracking state - master ticker across ALL sessions
   const [notification, setNotification] = useState<string | null>(null);
   const [eventTicker, setEventTicker] = useState<SuccessEvent[]>([]); // All events across all sessions (persisted)
   const [contributions, setContributions] = useState<Anchor[]>([]); // Auto-pushed to Weave
+  const [weaveHistory, setWeaveHistory] = useState<Array<{id: string; timestamp: string; op_name: string; inputs: Record<string, unknown>; output: unknown}>>([]);
 
   // Separate mount effect to ensure it always runs
   useEffect(() => {
@@ -155,7 +157,11 @@ export default function AutoForkConsole() {
       if (savedEventLog) setEventLog(JSON.parse(savedEventLog));
       if (savedSessionId) setCurrentSessionId(savedSessionId);
       const savedTicker = localStorage.getItem("cache_ticker");
-      if (savedTicker) setEventTicker(JSON.parse(savedTicker));
+      if (savedTicker) {
+        // Filter out demo data
+        const ticker = JSON.parse(savedTicker).filter((e: SuccessEvent) => !e.sessionId?.startsWith("demo-"));
+        setEventTicker(ticker);
+      }
     } catch (e) {
       console.error("Failed to load from localStorage:", e);
     }
@@ -213,6 +219,25 @@ export default function AutoForkConsole() {
     const interval = setInterval(checkClaudestorm, 10000);
     return () => clearInterval(interval);
   }, [mounted]);
+
+  // Fetch Weave history
+  useEffect(() => {
+    if (!mounted || demoMode) return;
+    const fetchWeave = async () => {
+      try {
+        const res = await fetch("/api/weave-history");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.calls) setWeaveHistory(data.calls);
+        }
+      } catch {
+        // Silent fail
+      }
+    };
+    fetchWeave();
+    const interval = setInterval(fetchWeave, 30000); // Refresh every 30s
+    return () => clearInterval(interval);
+  }, [mounted, demoMode]);
 
   const lastGoldAnchor = anchors.filter((a) => a.isGold)[0] || null;
 
@@ -292,6 +317,14 @@ export default function AutoForkConsole() {
     setTimeout(() => setNotification(null), 2000);
   }, []);
 
+  // Mark contribution as gold
+  const markGold = useCallback((id: string) => {
+    setContributions(prev => prev.map(c => c.id === id ? { ...c, isGold: true } : c));
+    setAnchors(prev => prev.map(a => a.id === id ? { ...a, isGold: true } : a));
+    setNotification("⭐ Marked as gold pattern");
+    setTimeout(() => setNotification(null), 2000);
+  }, []);
+
   // Poll ALL sessions for success events - master ticker
   useEffect(() => {
     if (!mounted || !claudestormConnected || claudestormSessions.length === 0) return;
@@ -331,20 +364,30 @@ export default function AutoForkConsole() {
       }
 
       if (newEvents.length > 0) {
-        setEventTicker(prev => {
-          // Dedupe by content (details), not just timestamp - same commit shouldn't show twice
-          const existingDetails = new Set(prev.map(e => `${e.type}-${e.details}`));
-          const uniqueNew = newEvents.filter(e => !existingDetails.has(`${e.type}-${e.details}`));
-          if (uniqueNew.length === 0) return prev;
-          return [...uniqueNew, ...prev].slice(0, 50); // Keep last 50
-        });
+        // Dedupe by content
+        const existingDetails = new Set(eventTicker.map(e => `${e.type}-${e.details}`));
+        const uniqueNew = newEvents.filter(e => !existingDetails.has(`${e.type}-${e.details}`));
+
+        if (uniqueNew.length > 0) {
+          setEventTicker(prev => [...uniqueNew, ...prev].slice(0, 50));
+
+          // Auto-push only NEW events that haven't been pushed
+          for (const event of uniqueNew) {
+            const eventKey = `${event.type}-${event.details}`;
+            if (!pushedEventsRef.current.has(eventKey) &&
+                (event.type === "user_confirmation" || event.type === "git_commit")) {
+              pushedEventsRef.current.add(eventKey);
+              pushContribution(event.sessionId!, [event]);
+            }
+          }
+        }
       }
     };
 
     checkAllSessions();
     const interval = setInterval(checkAllSessions, 15000);
     return () => clearInterval(interval);
-  }, [mounted, claudestormConnected, claudestormSessions]);
+  }, [mounted, claudestormConnected, claudestormSessions, pushContribution, eventTicker]);
 
 
 
@@ -505,22 +548,26 @@ export default function AutoForkConsole() {
       <div className="max-w-7xl mx-auto mb-6">
         <div className="bg-gradient-to-r from-violet-950/30 via-zinc-900/50 to-sky-950/30 rounded-xl p-5 border border-violet-800/30 backdrop-blur">
           <h2 className="text-sm font-semibold mb-4 text-zinc-300 uppercase tracking-wide">Org Cache</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <div className="text-center">
-              <div className="text-3xl font-bold text-violet-300">{anchors.length + (demoMode ? 47 : 0)}</div>
-              <div className="text-xs text-zinc-500">patterns stored</div>
+              <div className="text-3xl font-bold text-violet-300">{eventLog.length + (demoMode ? 47 : 0)}</div>
+              <div className="text-xs text-zinc-500">patterns pushed</div>
             </div>
             <div className="text-center">
               <div className="text-3xl font-bold text-emerald-300">{eventTicker.filter(e => e.type === "git_commit").length + (demoMode ? 34 : 0)}</div>
-              <div className="text-xs text-zinc-500">commits captured</div>
+              <div className="text-xs text-zinc-500">commits</div>
+            </div>
+            <div className="text-center">
+              <div className="text-3xl font-bold text-pink-300">{eventTicker.filter(e => e.type === "user_confirmation").length + (demoMode ? 8 : 0)}</div>
+              <div className="text-xs text-zinc-500">magic</div>
             </div>
             <div className="text-center">
               <div className="text-3xl font-bold text-amber-300">{anchors.filter(a => a.isGold).length + (demoMode ? 12 : 0)}</div>
-              <div className="text-xs text-zinc-500">gold patterns</div>
+              <div className="text-xs text-zinc-500">gold</div>
             </div>
             <div className="text-center">
-              <div className="text-3xl font-bold text-sky-300">{demoMode ? "89%" : anchors.length > 0 ? "100%" : "—"}</div>
-              <div className="text-xs text-zinc-500">success rate</div>
+              <div className="text-3xl font-bold text-sky-300">{(claudestormSessions.reduce((sum, s) => sum + s.total_tokens, 0) / 1000).toFixed(0)}k</div>
+              <div className="text-xs text-zinc-500">tokens</div>
             </div>
           </div>
         </div>
@@ -542,9 +589,13 @@ export default function AutoForkConsole() {
                 <div key={c.id} className="bg-zinc-900/50 rounded-lg p-3 border border-zinc-700/50 flex items-center justify-between">
                   <div className="flex-1 min-w-0">
                     <span className="text-xs text-zinc-500 mr-2">{new Date(c.createdAt).toLocaleTimeString()}</span>
+                    {c.isGold && <span className="text-amber-400 mr-1">⭐</span>}
                     <span className="text-sm text-zinc-300 truncate">{c.summary.split("\n")[0]}</span>
                   </div>
-                  <button onClick={() => undoContribution(c.id)} className="text-xs text-zinc-500 hover:text-zinc-300 px-2">undo</button>
+                  <div className="flex gap-1">
+                    {!c.isGold && <button onClick={() => markGold(c.id)} className="text-xs text-amber-500 hover:text-amber-300 px-2">⭐</button>}
+                    <button onClick={() => undoContribution(c.id)} className="text-xs text-zinc-500 hover:text-zinc-300 px-2">undo</button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -552,38 +603,24 @@ export default function AutoForkConsole() {
         </div>
       )}
 
-      {/* Event Log */}
+      {/* Weave History - From API */}
       <div className="max-w-7xl mx-auto">
         <div className="bg-zinc-900/50 rounded-xl p-5 border border-zinc-800/50 backdrop-blur">
           <h2 className="text-sm font-semibold mb-4 text-zinc-300 uppercase tracking-wide flex items-center gap-2">
-            Event Log
+            Weave History
             <span className="px-2 py-0.5 bg-zinc-800 rounded-full text-xs font-normal text-zinc-400">
-              {eventLog.length}
+              {weaveHistory.length}
             </span>
           </h2>
-          <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-            {eventLog.length === 0 ? (
-              <p className="text-zinc-600 text-sm text-center py-4">No events recorded</p>
+          <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+            {weaveHistory.length === 0 ? (
+              <p className="text-zinc-600 text-sm text-center py-4">Loading from Weave...</p>
             ) : (
-              eventLog.map((event) => (
-                <div
-                  key={event.id}
-                  className="bg-zinc-800/50 rounded-lg p-2.5 text-sm border border-zinc-700/50 font-mono"
-                >
-                  <span className="text-zinc-500 mr-3">
-                    {new Date(event.timestamp).toLocaleTimeString()}
-                  </span>
-                  <span className={`${
-                    event.message.includes("FORKED")
-                      ? "text-violet-400"
-                      : event.message.includes("GOLD")
-                      ? "text-amber-400"
-                      : event.message.includes("AUTO_ANCHOR")
-                      ? "text-emerald-400"
-                      : "text-zinc-300"
-                  }`}>
-                    {event.message}
-                  </span>
+              weaveHistory.map((call) => (
+                <div key={call.id} className="bg-violet-900/20 rounded-lg p-2.5 text-sm border border-violet-800/30 font-mono">
+                  <span className="text-zinc-500 mr-3">{call.timestamp ? new Date(call.timestamp).toLocaleTimeString() : "—"}</span>
+                  <span className="text-violet-400">{(call.inputs as Record<string, string>)?.success_type || call.op_name}</span>
+                  <span className="text-zinc-500 ml-2 truncate">{((call.inputs as Record<string, string>)?.output || "").slice(0, 60)}</span>
                 </div>
               ))
             )}
