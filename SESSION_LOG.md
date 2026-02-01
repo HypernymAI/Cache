@@ -167,6 +167,99 @@ The [wandb-mcp-server](https://github.com/wandb/wandb-mcp-server) provides:
 - "What commits worked for auth features?"
 - "Find patterns with Next.js tech stack"
 
+### Full Loop Validated ✓
+```
+Claude Code (this session)
+    ↓
+Claudestorm (tracking in background)
+    ↓
+AutoFork Console (success detection → auto-anchor)
+    ↓
+Weave (6 patterns pushed, queryable)
+    ↓
+MCP query (tested live: returned 5 patterns)
+    ↓
+Any agent can retrieve "what worked before"
+```
+
+---
+
+## Action Plan: Next Steps
+
+### 1. Test Workflows
+- [ ] End-to-end test: Start fresh session → do work → commit → verify auto-anchor → verify Weave push
+- [ ] Test success detection accuracy: run through 10 real sessions, measure precision/recall
+- [ ] Test MCP retrieval: configure wandb-mcp-server, query from fresh Claude session
+- [ ] Load test: push 100+ patterns to Weave, verify query performance
+
+### 2. General Polish (Remove Manual Steps)
+- [ ] **Auto-session selection**: Pick most recent active session automatically
+- [ ] **Remove "→ Weave" button**: Push should be fully automatic on gold anchors (already implemented, just remove manual button?)
+- [ ] **Remove session dropdown**: AutoFork should just watch ALL sessions, not require selection
+- [ ] **Background polling**: Move from frontend polling to backend event stream
+- [ ] **Remove transcript input**: It's a control panel, not an input form - the data comes from Claudestorm
+
+### 3. Smarter Categorization (Claude's Pick)
+- [ ] **Pattern similarity on session start**: When new session begins, automatically query Weave for similar past patterns based on initial task description
+- [ ] Inject top 3 relevant patterns into the session context
+- [ ] Track which injected patterns led to success (feedback loop for the feedback loop)
+- [ ] Eventually: embeddings-based similarity instead of keyword matching
+
+### 4. Nice-to-Haves
+- [ ] Dashboard view: success rate by goal_type, tech_stack trends
+- [ ] Pattern diff: compare two successful patterns
+- [ ] Export patterns to markdown for documentation
+- [ ] Slack/Discord webhook on gold anchor
+
+---
+
+## Technical Notes
+
+### Why This Architecture?
+
+**Claudestorm** handles the heavy lifting:
+- Session tracking (already watching Claude Code)
+- Compression (Neptune/hypernym - when available)
+- Database storage
+
+**AutoFork Console** is the curation layer:
+- Deterministic success detection (fallback when claudestorm endpoint unavailable)
+- Quality filter (gold anchors = high confidence successes)
+- Weave push (org-wide persistence)
+
+**Weave** is the org memory:
+- Cross-user, cross-session patterns
+- Already has MCP server (wandb-mcp-server)
+- Queryable by any agent
+
+**Key insight**: We don't build the whole platform. We build the glue between existing pieces:
+- Claudestorm already tracks → we detect success
+- Weave already stores → we push patterns
+- MCP already queries → we categorize for retrieval
+
+### Files Added This Session
+```
+app/api/success-events/[sessionId]/route.ts  - Local success detection
+app/api/push-to-weave/route.ts               - Weave push endpoint
+mcp-config.json                              - MCP server config
+scripts/push_to_weave.py                     - Enhanced with categorization
+```
+
+### Success Detection Patterns
+```typescript
+git_commit:        /\[[\w-]+\s+[\da-f]+\]|committed/
+tests_passed:      /(\d+)\s*pass(ed)?|✓|PASS|0 failed/
+deploy_success:    /deployed|vercel\.app|netlify\.app/
+user_confirmation: /^(done|thanks|perfect|lgtm)$/
+build_success:     /compiled successfully|Build succeeded/
+```
+
+### Categorization Heuristics
+```python
+goal_type:  deploy|testing|auth|api|ui|bugfix|refactor|database|feature
+tech_stack: nextjs|react|typescript|python|tailwind|sqlite|postgres|docker|vercel|git
+```
+
 ---
 
 ## Weave Integration Plan
