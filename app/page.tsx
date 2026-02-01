@@ -106,7 +106,7 @@ export default function AutoForkConsole() {
 
   // Event tracking state - master ticker across ALL sessions
   const [notification, setNotification] = useState<string | null>(null);
-  const [eventTicker, setEventTicker] = useState<SuccessEvent[]>([]); // All events across all sessions
+  const [eventTicker, setEventTicker] = useState<SuccessEvent[]>([]); // All events across all sessions (persisted)
   const [pendingAnchors, setPendingAnchors] = useState<Anchor[]>([]); // Awaiting user review
 
   // Separate mount effect to ensure it always runs
@@ -125,6 +125,8 @@ export default function AutoForkConsole() {
       if (savedAnchors) setAnchors(JSON.parse(savedAnchors));
       if (savedEventLog) setEventLog(JSON.parse(savedEventLog));
       if (savedSessionId) setCurrentSessionId(savedSessionId);
+      const savedTicker = localStorage.getItem("cache_ticker");
+      if (savedTicker) setEventTicker(JSON.parse(savedTicker));
     } catch (e) {
       console.error("Failed to load from localStorage:", e);
     }
@@ -147,6 +149,12 @@ export default function AutoForkConsole() {
       localStorage.setItem("autofork_sessionId", currentSessionId);
     }
   }, [currentSessionId, mounted]);
+
+  useEffect(() => {
+    if (mounted) {
+      localStorage.setItem("cache_ticker", JSON.stringify(eventTicker));
+    }
+  }, [eventTicker, mounted]);
 
   // Check claudestorm connection and fetch all sessions
   useEffect(() => {

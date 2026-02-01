@@ -16,17 +16,65 @@
 ## Resume Prompt (Start Here)
 
 ```
-#magic Continue work on AutoFork Console.
+#magic Continue work on Caché (renamed from AutoFork Console).
 
-First, query Weave for what worked last time:
-- Project: autofork-console
-- Query: "show recent successful patterns"
+## What This Is
+Hackathon project: Self-improving agents through cached successes.
+Flow: Agent wins → Caché detects → User approves → Weave stores → Future agents query what worked
 
-Use those patterns to inform your approach.
+## Current State
+- Frontend: Next.js app at localhost:3000
+- Backend: Claudestorm API at localhost:8100
+- Storage: Weave (W&B) for patterns
 
-Current state: SESSION_LOG.md
-Run: Terminal 1: cd ~/Desktop/source/claudestorm && CLAUDESTORM_DB_DIR=. .venv/bin/python -m uvicorn core.autofork_api:app --port 8100
-     Terminal 2: cd ~/Desktop/source/hackathon_site && npm run dev
+## Run Commands
+Terminal 1: cd ~/Desktop/source/claudestorm && CLAUDESTORM_DB_DIR=. .venv/bin/python -m uvicorn core.autofork_api:app --port 8100
+Terminal 2: cd ~/Desktop/source/hackathon_site && npm run dev
+
+## Technical Audit (Session 4)
+
+### Data Sources Available
+
+**Claudestorm API (localhost:8100)**
+- GET /api/autofork/sessions?limit=10 → {session_id, message_count, total_tokens, last_timestamp, summary}
+- GET /api/autofork/session/{id} → {stats, analysis.scores, drift_signals, success_signals, should_fork, error_count}
+- GET /api/autofork/session/{id}/anchor → {goal, session_summary, recent_user_messages, recent_assistant_messages, blockers, files_touched, recent_tools}
+
+**Local API (Next.js)**
+- GET /api/success-events/{sessionId} → detects: git_commit, tests_passed, deploy_success, build_success, user_confirmation (magic keyword)
+- POST /api/push-to-weave → accepts {anchor: {input, output, success_type, tokens, is_gold, session_id}} → pushes to Weave
+
+### State Tracked (app/page.tsx)
+- claudestormSessions (live) - sessions from API
+- eventTicker (persisted) - detected events across all sessions
+- pendingAnchors (live) - anchors awaiting user review
+- anchors (persisted) - approved anchors
+- eventLog (persisted) - weave push history
+
+### Current UI Sections
+1. Header - connection status, pending count
+2. Sessions panel - session badges, stats counters (commits/tests/deploys/builds/magic), master ticker
+3. Review Queue - approve/gold/discard anchors → pushes to Weave on approve
+4. Event Log - shows WEAVE_PUSH messages
+
+### Unused Data We Could Display
+From Claudestorm (fetched but not shown):
+- analysis.scores - 8-dimension conversation analysis
+- drift_signals - session going off track warnings
+- success_signals - positive indicators
+- should_fork - recommendation to start new session
+- blockers - current errors/issues
+- recent_tools - tool usage counts
+- files_touched - files being edited
+
+### What's Missing for Hackathon Demo
+- No visualization of the self-improving loop
+- No Weave query demo (showing patterns coming back to agents)
+- No session health/quality indicators
+- Stats are just numbers, no charts/graphs
+- No "before/after" showing agent improvement
+
+Read full context: SESSION_LOG.md
 ```
 
 ---
@@ -112,6 +160,50 @@ The goal: Agents that get better over time by learning from their own successes.
 [x] Auto-push to Weave → on gold anchors (SESSION 3)
 [ ] Compress to pattern (Neptune/Claudestorm handles this)
 [ ] MCP query → agents retrieve patterns from Weave
+```
+
+---
+
+## Session 4 Summary (2026-02-01)
+
+### What We Built
+
+**Rebranded to Caché** - cleaner name for hackathon
+
+**Multi-session Master Ticker**
+- Watches ALL active Claudestorm sessions (not just one)
+- Polls every 15 seconds for success events
+- Dedupes by content to avoid duplicates
+- Persists to localStorage across refreshes
+- Shows: timestamp, session label (from summary), event type, details
+
+**Direct Weave Push**
+- Review queue for manual curation before pushing
+- Approve/Gold/Discard buttons
+- Approve → POST to /api/push-to-weave with full anchor payload
+- Pushes directly to Weave (not through Claudestorm script)
+
+**"magic" Keyword Trigger**
+- Say "magic" anywhere in a message → detected as checkpoint
+- Works for session starts (#magic Continue...) and mid-session
+
+**Tightened Success Detection** (app/api/success-events/[sessionId]/route.ts)
+- git_commit: requires actual `[branch hash] message` format
+- tests_passed: requires count like "5 tests passed"
+- deploy_success: requires actual URL (vercel.app, netlify.app)
+- build_success: requires timing like "compiled in 2s"
+- user_confirmation: just "magic" keyword now
+
+**Cleanup**
+- Removed: fork threshold, Latest Anchor panel, Anchor Timeline panel
+- Removed: unused handlers (handleMarkGold, handleCopyResume, etc.)
+- Simplified header to just connection status + pending count
+
+### Files Changed
+```
+app/page.tsx                              - Main UI (Caché)
+app/api/push-to-weave/route.ts            - Direct anchor push
+app/api/success-events/[sessionId]/route.ts - Tightened detection
 ```
 
 ---
